@@ -41,8 +41,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
   bool _sttReady = false;
   bool _disposed = false;
   bool _listeningGuard = false;
-  bool _silenceHandled = false; // prevents onError + onStatus both triggering silence handler
-  String _lastPartial = '';
+  String _lastPartial = ''; // Chrome never fires final=true; we use this on notListening
 
   Duration _elapsed = Duration.zero;
   Timer? _callTimer;
@@ -119,11 +118,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
         onError: (e) {
           debugPrint('[STT] Error: ${e.errorMsg} permanent=${e.permanent}');
           if (_disposed || !mounted || _state != _CallState.listening) return;
-          if (e.errorMsg == 'no-speech' || e.errorMsg == 'audio-capture') {
-            _handleSilence();
-          } else {
-            Future.delayed(const Duration(seconds: 1), _startListening);
-          }
+          Future.delayed(const Duration(seconds: 1), _startListening);
         },
         onStatus: (status) {
           debugPrint('[STT] Status: $status  state=$_state guard=$_listeningGuard');
@@ -134,12 +129,14 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
               !_listeningGuard) {
             final words = _lastPartial.trim();
             if (words.isNotEmpty) {
+              // Chrome ended the session with accumulated partial text
               _lastPartial = '';
-              _silenceHandled = false;
               debugPrint('[STT] Using last partial as final: "$words"');
               _sendToBot(words);
             } else {
-              _handleSilence();
+              // Silence timeout — tell the user we're waiting instead of
+              // crashing by rapid-firing listen() again immediately.
+              _speakWaiting();
             }
           }
         },
@@ -180,16 +177,12 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     // Completion handler fires when done → calls _startListening
   }
 
-  // Called when STT times out with no speech detected.
-  // Speaks a gentle prompt so the user knows the bot is still active,
-  // then the TTS completion handler restarts listening automatically.
-  void _handleSilence() {
-    if (_disposed || !mounted || _muted || _silenceHandled) return;
-    _silenceHandled = true; // guard: onError + onStatus can both fire for no-speech
-    debugPrint('[CALL] Silence detected — speaking waiting prompt');
+  Future<void> _speakWaiting() async {
+    if (_disposed || !mounted || _muted) return;
+    debugPrint('[TTS] Speaking waiting prompt');
     setState(() => _state = _CallState.speaking);
-    _tts.speak("I'm waiting for your response. Go ahead.");
-    // TTS completion handler → _startListening, which resets _silenceHandled
+    await _tts.speak("I'm waiting for your response. Please go ahead.");
+    // Completion handler fires when done → calls _startListening
   }
 
   Future<void> _startListening() async {
@@ -206,15 +199,14 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
         _state = _CallState.listening;
         _userCaption = '';
         _botCaption = '';
-        _silenceHandled = false;
       });
       debugPrint('[STT] Calling listen()');
       await _stt.listen(
         onResult: _onSttResult,
         listenOptions: SpeechListenOptions(
           partialResults: true,
-          listenFor: const Duration(seconds: 10),
-          pauseFor: const Duration(seconds: 5),
+          listenFor: const Duration(seconds: 30),
+          pauseFor: const Duration(seconds: 2),
         ),
       );
       debugPrint('[STT] listen() returned  isListening=${_stt.isListening}');
