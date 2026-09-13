@@ -48,22 +48,22 @@ class DetailScreen extends StatelessWidget {
               Positioned(
                 top: 60,
                 left: 20,
-                child: Icon(Icons.phone_rounded, color: Colors.white.withOpacity(0.07), size: 60),
+                child: Icon(Icons.phone_rounded, color: Colors.white.withValues(alpha: 0.07), size: 60),
               ),
               Positioned(
                 top: 80,
                 right: 30,
-                child: Icon(Icons.chat_bubble_rounded, color: Colors.white.withOpacity(0.07), size: 50),
+                child: Icon(Icons.chat_bubble_rounded, color: Colors.white.withValues(alpha: 0.07), size: 50),
               ),
               Positioned(
                 bottom: 40,
                 left: 100,
-                child: Icon(Icons.person_rounded, color: Colors.white.withOpacity(0.07), size: 70),
+                child: Icon(Icons.person_rounded, color: Colors.white.withValues(alpha: 0.07), size: 70),
               ),
               Positioned(
                 top: 40,
                 right: 80,
-                child: Icon(Icons.mic_rounded, color: Colors.white.withOpacity(0.07), size: 45),
+                child: Icon(Icons.mic_rounded, color: Colors.white.withValues(alpha: 0.07), size: 45),
               ),
               // Status bar area
               SafeArea(
@@ -78,7 +78,7 @@ class DetailScreen extends StatelessWidget {
                           width: 36,
                           height: 36,
                           decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.1),
+                            color: Colors.white.withValues(alpha: 0.1),
                             borderRadius: BorderRadius.circular(18),
                           ),
                           child: const Icon(Icons.chevron_left, color: Colors.white, size: 22),
@@ -90,7 +90,7 @@ class DetailScreen extends StatelessWidget {
                             width: 36,
                             height: 36,
                             decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.1),
+                              color: Colors.white.withValues(alpha: 0.1),
                               borderRadius: BorderRadius.circular(18),
                             ),
                             child: const Icon(Icons.star_border_rounded, color: Colors.white, size: 18),
@@ -100,7 +100,7 @@ class DetailScreen extends StatelessWidget {
                             width: 36,
                             height: 36,
                             decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.1),
+                              color: Colors.white.withValues(alpha: 0.1),
                               borderRadius: BorderRadius.circular(18),
                             ),
                             child: const Icon(Icons.more_horiz, color: Colors.white, size: 18),
@@ -126,7 +126,7 @@ class DetailScreen extends StatelessWidget {
                 shape: BoxShape.circle,
                 boxShadow: [
                   BoxShadow(
-                    color: const Color(0xFF7C3AED).withOpacity(0.2),
+                    color: const Color(0xFF7C3AED).withValues(alpha: 0.2),
                     blurRadius: 20,
                     spreadRadius: 2,
                   ),
@@ -146,8 +146,8 @@ class DetailScreen extends StatelessWidget {
                       child: Container(
                         width: 56,
                         height: 56,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFEDE9FE),
+                        decoration: const BoxDecoration(
+                          color: Color(0xFFEDE9FE),
                           shape: BoxShape.circle,
                         ),
                         child: const Icon(
@@ -169,15 +169,15 @@ class DetailScreen extends StatelessWidget {
                         shape: BoxShape.circle,
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.1),
+                            color: Colors.black.withValues(alpha: 0.1),
                             blurRadius: 6,
                           ),
                         ],
                       ),
                       child: Container(
                         margin: const EdgeInsets.all(3),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF10B981),
+                        decoration: const BoxDecoration(
+                          color: Color(0xFF10B981),
                           shape: BoxShape.circle,
                         ),
                         child: const Icon(
@@ -321,7 +321,7 @@ class DetailScreen extends StatelessWidget {
         boxShadow: isPrimary
             ? [
                 BoxShadow(
-                  color: const Color(0xFF7C3AED).withOpacity(0.3),
+                  color: const Color(0xFF7C3AED).withValues(alpha: 0.3),
                   blurRadius: 12,
                   offset: const Offset(0, 4),
                 ),
@@ -474,7 +474,7 @@ class DetailScreen extends StatelessWidget {
                 borderRadius: BorderRadius.circular(26),
                 boxShadow: [
                   BoxShadow(
-                    color: const Color(0xFF7C3AED).withOpacity(0.3),
+                    color: const Color(0xFF7C3AED).withValues(alpha: 0.3),
                     blurRadius: 16,
                     offset: const Offset(0, 6),
                   ),

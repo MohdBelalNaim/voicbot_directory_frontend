@@ -16,11 +16,11 @@ class _SearchScreenState extends State<SearchScreen> {
   final List<String> _categories = ['All', 'Telecom', 'Fintech & Banking', 'Travel & Airlines', 'Food & Delivery'];
 
   final List<Map<String, dynamic>> _recentBots = [
-    {'label': 'Jio', 'sublabel': 'Saarthi', 'bg': Color(0xFFEFF6FF), 'fg': Color(0xFF1D4ED8)},
-    {'label': 'Asha', 'sublabel': 'Airtel', 'bg': Color(0xFFFFF1F2), 'fg': Color(0xFFBE123C)},
-    {'label': '6E', 'sublabel': '6Eskai', 'bg': Color(0xFFEEF2FF), 'fg': Color(0xFF3730A3)},
-    {'label': 'AHA', 'sublabel': 'Axis', 'bg': Color(0xFFFFF1F2), 'fg': Color(0xFF9F1239)},
-    {'label': 'AZ', 'sublabel': 'Alexa', 'bg': Color(0xFFFFFBEB), 'fg': Color(0xFFB45309)},
+    {'label': 'Jio', 'sublabel': 'Saarthi', 'bg': const Color(0xFFEFF6FF), 'fg': const Color(0xFF1D4ED8)},
+    {'label': 'Asha', 'sublabel': 'Airtel', 'bg': const Color(0xFFFFF1F2), 'fg': const Color(0xFFBE123C)},
+    {'label': '6E', 'sublabel': '6Eskai', 'bg': const Color(0xFFEEF2FF), 'fg': const Color(0xFF3730A3)},
+    {'label': 'AHA', 'sublabel': 'Axis', 'bg': const Color(0xFFFFF1F2), 'fg': const Color(0xFF9F1239)},
+    {'label': 'AZ', 'sublabel': 'Alexa', 'bg': const Color(0xFFFFFBEB), 'fg': const Color(0xFFB45309)},
   ];
 
   @override
@@ -212,12 +212,12 @@ class _SearchScreenState extends State<SearchScreen> {
                             color: bot['bg'] as Color,
                             borderRadius: BorderRadius.circular(16),
                             border: Border.all(
-                              color: (bot['fg'] as Color).withOpacity(0.15),
+                              color: (bot['fg'] as Color).withValues(alpha: 0.15),
                               width: 1,
                             ),
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.black.withOpacity(0.04),
+                                color: Colors.black.withValues(alpha: 0.04),
                                 blurRadius: 8,
                                 offset: const Offset(0, 2),
                               ),
