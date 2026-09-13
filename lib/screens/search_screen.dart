@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../models/app_colors.dart';
-import '../models/voice_bot.dart';
+import '../models/customer.dart';
+import '../services/api_service.dart';
+import '../services/chat_history_store.dart';
 import 'detail_screen.dart';
 
 class SearchScreen extends StatefulWidget {
@@ -12,29 +14,75 @@ class SearchScreen extends StatefulWidget {
 }
 
 class _SearchScreenState extends State<SearchScreen> {
-  int _selectedCategory = 0;
-  final List<String> _categories = ['All', 'Telecom', 'Fintech & Banking', 'Travel & Airlines', 'Food & Delivery'];
+  List<Customer> _customers = [];
+  final _controller = TextEditingController();
+  String _query = '';
 
-  final List<Map<String, dynamic>> _recentBots = [
-    {'label': 'Jio', 'sublabel': 'Saarthi', 'bg': const Color(0xFFEFF6FF), 'fg': const Color(0xFF1D4ED8)},
-    {'label': 'Asha', 'sublabel': 'Airtel', 'bg': const Color(0xFFFFF1F2), 'fg': const Color(0xFFBE123C)},
-    {'label': '6E', 'sublabel': '6Eskai', 'bg': const Color(0xFFEEF2FF), 'fg': const Color(0xFF3730A3)},
-    {'label': 'AHA', 'sublabel': 'Axis', 'bg': const Color(0xFFFFF1F2), 'fg': const Color(0xFF9F1239)},
-    {'label': 'AZ', 'sublabel': 'Alexa', 'bg': const Color(0xFFFFFBEB), 'fg': const Color(0xFFB45309)},
+  static const _bgs = [
+    Color(0xFFEDE9FE), Color(0xFFD1FAE5), Color(0xFFFFE4E6),
+    Color(0xFFFEF3C7), Color(0xFFDBEAFE), Color(0xFFFCE7F3),
   ];
+  static const _fgs = [
+    Color(0xFF6D28D9), Color(0xFF065F46), Color(0xFFBE123C),
+    Color(0xFFB45309), Color(0xFF1D4ED8), Color(0xFFBE185D),
+  ];
+
+  Color _bg(int i) => _bgs[i % _bgs.length];
+  Color _fg(int i) => _fgs[i % _fgs.length];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCustomers();
+  }
+
+  Future<void> _loadCustomers() async {
+    try {
+      final customers = await ApiService.fetchCustomers();
+      if (mounted) setState(() => _customers = customers);
+    } catch (_) {}
+  }
+
+  List<Customer> get _filtered {
+    if (_query.isEmpty) return _customers;
+    final q = _query.toLowerCase();
+    return _customers.where((c) => c.name.toLowerCase().contains(q)).toList();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _navigateTo(BuildContext context, Customer c, int colorIndex) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => DetailScreen(customer: c, colorIndex: colorIndex)),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
+    final recents = ChatHistoryStore.instance.chats;
+    final results = _filtered;
+
     return Scaffold(
-      backgroundColor: AppColors.surface,
+      backgroundColor: AppColors.background,
       body: SafeArea(
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _buildHeader(),
             _buildSearchBar(),
-            _buildCategoryPills(),
             Expanded(
-              child: _buildContent(),
+              child: ListView(
+                padding: EdgeInsets.zero,
+                children: [
+                  if (recents.isNotEmpty && _query.isEmpty) _buildRecentsSection(context, recents),
+                  _buildResultsSection(context, results),
+                ],
+              ),
             ),
           ],
         ),
@@ -44,41 +92,26 @@ class _SearchScreenState extends State<SearchScreen> {
 
   Widget _buildHeader() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 16, 16, 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            'Search Bots',
-            style: GoogleFonts.plusJakartaSans(
-              fontSize: 24,
-              fontWeight: FontWeight.w700,
-              color: AppColors.textPrimary,
-              letterSpacing: -0.5,
-            ),
-          ),
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: const Color(0xFFF1F5F9),
-              borderRadius: BorderRadius.circular(18),
-            ),
-            child: const Icon(Icons.add, color: Color(0xFF475569), size: 20),
-          ),
-        ],
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
+      child: Text(
+        'Search Bots',
+        style: GoogleFonts.plusJakartaSans(
+          fontSize: 26, fontWeight: FontWeight.w700,
+          color: AppColors.textPrimary, letterSpacing: -0.5,
+        ),
       ),
     );
   }
 
   Widget _buildSearchBar() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
       child: Container(
         height: 48,
         decoration: BoxDecoration(
-          color: const Color(0xFFF3F4F7),
+          color: Colors.white,
           borderRadius: BorderRadius.circular(24),
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))],
         ),
         child: Row(
           children: [
@@ -86,161 +119,83 @@ class _SearchScreenState extends State<SearchScreen> {
             const Icon(Icons.search_rounded, color: Color(0xFF9CA3AF), size: 18),
             const SizedBox(width: 10),
             Expanded(
-              child: Text(
-                'A',
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: AppColors.textPrimary,
+              child: TextField(
+                controller: _controller,
+                decoration: InputDecoration(
+                  hintText: 'Search bots...',
+                  hintStyle: GoogleFonts.plusJakartaSans(fontSize: 14, color: const Color(0xFF9CA3AF)),
+                  border: InputBorder.none,
                 ),
+                style: GoogleFonts.plusJakartaSans(fontSize: 14, color: AppColors.textPrimary),
+                onChanged: (v) => setState(() => _query = v),
               ),
             ),
-            Container(
-              width: 20,
-              height: 20,
-              margin: const EdgeInsets.only(right: 14),
-              decoration: BoxDecoration(
-                color: const Color(0xFFCBD5E1),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Icon(Icons.close, color: Colors.white, size: 12),
-            ),
+            if (_query.isNotEmpty)
+              GestureDetector(
+                onTap: () { _controller.clear(); setState(() => _query = ''); },
+                child: Container(
+                  width: 20, height: 20,
+                  margin: const EdgeInsets.only(right: 14),
+                  decoration: BoxDecoration(color: const Color(0xFFCBD5E1), borderRadius: BorderRadius.circular(10)),
+                  child: const Icon(Icons.close, color: Colors.white, size: 12),
+                ),
+              )
+            else
+              const SizedBox(width: 14),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildCategoryPills() {
-    return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: Color(0xFFF1F5F9), width: 1)),
-      ),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.fromLTRB(24, 8, 24, 12),
-        child: Row(
-          children: List.generate(_categories.length, (index) {
-            final bool isSelected = _selectedCategory == index;
-            return Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: GestureDetector(
-                onTap: () => setState(() => _selectedCategory = index),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: isSelected ? const Color(0xFF1F2937) : const Color(0xFFF3F4F6),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(
-                    _categories[index],
-                    style: GoogleFonts.plusJakartaSans(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: isSelected ? Colors.white : const Color(0xFF4B5563),
-                    ),
-                  ),
-                ),
-              ),
-            );
-          }),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildContent() {
-    return ListView(
-      padding: EdgeInsets.zero,
-      children: [
-        _buildRecentBotsSection(),
-        _buildDirectorySection(),
-      ],
-    );
-  }
-
-  Widget _buildRecentBotsSection() {
+  Widget _buildRecentsSection(BuildContext context, List<RecentChat> recents) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'RECENTS',
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: const Color(0xFF9CA3AF),
-                  letterSpacing: 0.8,
-                ),
-              ),
-              Text(
-                'Clear',
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.primary,
-                ),
-              ),
-            ],
-          ),
+          Text('RECENTS',
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 11, fontWeight: FontWeight.w700,
+                  color: const Color(0xFF9CA3AF), letterSpacing: 0.8)),
           const SizedBox(height: 12),
           SizedBox(
             height: 82,
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
-              itemCount: _recentBots.length,
+              itemCount: recents.length,
               itemBuilder: (context, index) {
-                final bot = _recentBots[index];
+                final chat = recents[index];
+                final c = Customer(id: chat.customerId, name: chat.customerName);
                 return Padding(
                   padding: const EdgeInsets.only(right: 16),
                   child: GestureDetector(
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const DetailScreen()),
-                    ),
+                    onTap: () => _navigateTo(context, c, chat.colorIndex),
                     child: Column(
                       children: [
                         Container(
-                          width: 56,
-                          height: 56,
+                          width: 56, height: 56,
                           decoration: BoxDecoration(
-                            color: bot['bg'] as Color,
+                            color: _bg(chat.colorIndex),
                             borderRadius: BorderRadius.circular(16),
-                            border: Border.all(
-                              color: (bot['fg'] as Color).withValues(alpha: 0.15),
-                              width: 1,
-                            ),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.04),
-                                blurRadius: 8,
-                                offset: const Offset(0, 2),
-                              ),
-                            ],
+                            border: Border.all(color: _fg(chat.colorIndex).withOpacity(0.15)),
+                            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))],
                           ),
                           child: Center(
-                            child: Text(
-                              bot['label'] as String,
-                              style: GoogleFonts.plusJakartaSans(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w800,
-                                color: bot['fg'] as Color,
-                              ),
-                            ),
+                            child: Text(c.initials,
+                                style: GoogleFonts.plusJakartaSans(
+                                    fontSize: c.initials.length > 2 ? 10 : 13,
+                                    fontWeight: FontWeight.w800, color: _fg(chat.colorIndex))),
                           ),
                         ),
                         const SizedBox(height: 6),
-                        Text(
-                          bot['sublabel'] as String,
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w500,
-                            color: const Color(0xFF374151),
+                        SizedBox(
+                          width: 56,
+                          child: Text(
+                            chat.customerName.split(' ').first,
+                            style: GoogleFonts.plusJakartaSans(fontSize: 11, fontWeight: FontWeight.w500, color: const Color(0xFF374151)),
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.center,
                           ),
                         ),
                       ],
@@ -250,86 +205,69 @@ class _SearchScreenState extends State<SearchScreen> {
               },
             ),
           ),
+          const SizedBox(height: 8),
+          const Divider(color: Color(0xFFE5E7EB)),
         ],
       ),
     );
   }
 
-  Widget _buildDirectorySection() {
+  Widget _buildResultsSection(BuildContext context, List<Customer> results) {
+    final label = _query.isEmpty
+        ? 'ALL BOTS'
+        : '${results.length} RESULT${results.length == 1 ? '' : 'S'} FOR "${_query.toUpperCase()}"';
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'BOTS STARTING WITH "A"',
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: const Color(0xFF9CA3AF),
-                  letterSpacing: 0.6,
-                ),
-              ),
-              Text(
-                '12 Found',
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                  color: const Color(0xFF9CA3AF),
-                ),
-              ),
-            ],
-          ),
+          Text(label,
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 11, fontWeight: FontWeight.w700,
+                  color: const Color(0xFF9CA3AF), letterSpacing: 0.6)),
           const SizedBox(height: 8),
-          ...searchBots.map((bot) => _buildSearchBotRow(bot)),
+          if (results.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 32),
+              child: Center(
+                child: Text('No bots found',
+                    style: GoogleFonts.plusJakartaSans(fontSize: 14, color: AppColors.textSecondary)),
+              ),
+            )
+          else
+            ...results.asMap().entries.map((e) {
+              final colorIndex = _customers.indexOf(e.value);
+              return _buildBotRow(context, e.value, colorIndex < 0 ? 0 : colorIndex);
+            }),
         ],
       ),
     );
   }
 
-  Widget _buildSearchBotRow(VoiceBot bot) {
+  Widget _buildBotRow(BuildContext context, Customer c, int colorIndex) {
     return GestureDetector(
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => const DetailScreen()),
-      ),
+      onTap: () => _navigateTo(context, c, colorIndex),
       child: Container(
         margin: const EdgeInsets.only(bottom: 4),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-        ),
+        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
         child: Material(
           color: Colors.transparent,
           child: InkWell(
             borderRadius: BorderRadius.circular(16),
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const DetailScreen()),
-            ),
+            onTap: () => _navigateTo(context, c, colorIndex),
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               child: Row(
                 children: [
                   Container(
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(
-                      color: bot.avatarBg,
-                      shape: BoxShape.circle,
-                    ),
+                    width: 44, height: 44,
+                    decoration: BoxDecoration(color: _bg(colorIndex), shape: BoxShape.circle),
                     child: Center(
-                      child: Text(
-                        bot.initials,
-                        style: GoogleFonts.plusJakartaSans(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          color: bot.avatarText,
-                        ),
-                      ),
+                      child: Text(c.initials,
+                          style: GoogleFonts.plusJakartaSans(
+                              fontSize: c.initials.length > 2 ? 10 : 13,
+                              fontWeight: FontWeight.w700, color: _fg(colorIndex))),
                     ),
                   ),
                   const SizedBox(width: 14),
@@ -337,39 +275,20 @@ class _SearchScreenState extends State<SearchScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          bot.name,
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.textPrimary,
-                            letterSpacing: -0.2,
-                          ),
-                        ),
+                        Text(c.name,
+                            style: GoogleFonts.plusJakartaSans(
+                                fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                            overflow: TextOverflow.ellipsis),
                         const SizedBox(height: 2),
-                        Text(
-                          '${bot.category} • ${bot.languages ?? ""}',
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w400,
-                            color: AppColors.textSecondary,
-                          ),
-                        ),
+                        Text('AI Assistant',
+                            style: GoogleFonts.plusJakartaSans(fontSize: 12, color: AppColors.textSecondary)),
                       ],
                     ),
                   ),
                   Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF3F4F6),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: const Icon(
-                      Icons.mic_rounded,
-                      size: 15,
-                      color: Color(0xFF6B7280),
-                    ),
+                    width: 32, height: 32,
+                    decoration: BoxDecoration(color: const Color(0xFFF3F4F6), borderRadius: BorderRadius.circular(16)),
+                    child: const Icon(Icons.chat_bubble_outline_rounded, size: 15, color: Color(0xFF6B7280)),
                   ),
                 ],
               ),
