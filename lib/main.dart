@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'screens/contacts_screen.dart';
+import 'screens/main_screen.dart';
 
 void main() {
   runApp(const VoiceBotApp());
@@ -23,7 +23,7 @@ class VoiceBotApp extends StatelessWidget {
         useMaterial3: true,
         scaffoldBackgroundColor: const Color(0xFFF3F3F7),
       ),
-      home: const ContactsScreen(),
+      home: const MainScreen(),
     );
   }
 }

@@ -3,6 +3,9 @@ import 'package:google_fonts/google_fonts.dart';
 import '../models/app_colors.dart';
 import '../models/customer.dart';
 import '../services/api_service.dart';
+import '../services/chat_history_store.dart';
+import '../services/favorites_store.dart';
+import 'call_screen.dart';
 
 class _ChatMessage {
   final String role;
@@ -60,6 +63,7 @@ class _DetailScreenState extends State<DetailScreen> {
       _isSending = true;
     });
     _scrollToBottom();
+    ChatHistoryStore.instance.record(widget.customer.id, widget.customer.name, widget.colorIndex, text);
 
     try {
       await for (final chunk in ApiService.streamChat(widget.customer.id, text)) {
@@ -144,16 +148,50 @@ class _DetailScreenState extends State<DetailScreen> {
                   ),
                   Row(
                     children: [
-                      Container(
-                        width: 36, height: 36,
-                        decoration: BoxDecoration(color: Colors.white.withOpacity(0.1), borderRadius: BorderRadius.circular(18)),
-                        child: const Icon(Icons.star_border_rounded, color: Colors.white, size: 18),
+                      ListenableBuilder(
+                        listenable: FavoritesStore.instance,
+                        builder: (context, _) {
+                          final isFav = FavoritesStore.instance.isFavorite(widget.customer.id);
+                          return GestureDetector(
+                            onTap: () => FavoritesStore.instance.toggle(
+                              widget.customer.id, widget.customer.name, widget.colorIndex,
+                            ),
+                            child: Container(
+                              width: 36, height: 36,
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(18),
+                              ),
+                              child: Icon(
+                                isFav ? Icons.star_rounded : Icons.star_border_rounded,
+                                color: isFav ? const Color(0xFFFBBF24) : Colors.white,
+                                size: 18,
+                              ),
+                            ),
+                          );
+                        },
                       ),
                       const SizedBox(width: 8),
-                      Container(
-                        width: 36, height: 36,
-                        decoration: BoxDecoration(color: Colors.white.withOpacity(0.1), borderRadius: BorderRadius.circular(18)),
-                        child: const Icon(Icons.more_horiz, color: Colors.white, size: 18),
+                      GestureDetector(
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => CallScreen(
+                              customer: widget.customer,
+                              avatarBg: _bg,
+                              avatarFg: _fg,
+                            ),
+                          ),
+                        ),
+                        child: Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(18),
+                          ),
+                          child: const Icon(Icons.call_rounded, color: Colors.white, size: 18),
+                        ),
                       ),
                     ],
                   ),
