@@ -5,8 +5,10 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:speech_to_text/speech_to_text.dart';
+import 'package:voicebot_directory/store/api_store.dart';
 
 import '../models/customer.dart';
 import '../services/api_service.dart';
@@ -41,7 +43,8 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
   bool _sttReady = false;
   bool _disposed = false;
   bool _listeningGuard = false;
-  String _lastPartial = ''; // Chrome never fires final=true; we use this on notListening
+  String _lastPartial =
+      ''; // Chrome never fires final=true; we use this on notListening
 
   Duration _elapsed = Duration.zero;
   Timer? _callTimer;
@@ -73,7 +76,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     debugPrint('[TTS] Setting up...');
     try {
       await _tts.setLanguage('en-US');
-      await _tts.setSpeechRate(0.85);
+      await _tts.setSpeechRate(0.5);
       await _tts.setPitch(1.0);
       await _tts.setVolume(1.0);
 
@@ -121,7 +124,8 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
           Future.delayed(const Duration(seconds: 1), _startListening);
         },
         onStatus: (status) {
-          debugPrint('[STT] Status: $status  state=$_state guard=$_listeningGuard');
+          debugPrint(
+              '[STT] Status: $status  state=$_state guard=$_listeningGuard');
           if (_disposed || !mounted) return;
           if ((status == 'done' || status == 'notListening') &&
               _state == _CallState.listening &&
@@ -186,8 +190,10 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
   }
 
   Future<void> _startListening() async {
-    debugPrint('[STT] _startListening  ready=$_sttReady muted=$_muted guard=$_listeningGuard');
-    if (_disposed || !mounted || !_sttReady || _muted || _listeningGuard) return;
+    debugPrint(
+        '[STT] _startListening  ready=$_sttReady muted=$_muted guard=$_listeningGuard');
+    if (_disposed || !mounted || !_sttReady || _muted || _listeningGuard)
+      return;
     _listeningGuard = true;
     try {
       if (_stt.isListening) {
@@ -216,7 +222,8 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
   }
 
   void _onSttResult(SpeechRecognitionResult result) {
-    debugPrint('[STT] Result: "${result.recognizedWords}"  final=${result.finalResult}');
+    debugPrint(
+        '[STT] Result: "${result.recognizedWords}"  final=${result.finalResult}');
     if (_disposed || !mounted) return;
     // Track latest partial so we can use it if Chrome ends without final=true
     _lastPartial = result.recognizedWords;
@@ -224,6 +231,21 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     if (result.finalResult && result.recognizedWords.trim().isNotEmpty) {
       _lastPartial = '';
       _sendToBot(result.recognizedWords.trim());
+    }
+  }
+
+  bool _initialized = false;
+  late ApiService apiService;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+
+    if (!_initialized) {
+      final apiStore = context.read<ApiStore>();
+      apiService = ApiService(apiStore);
+
+      _initialized = true;
     }
   }
 
@@ -239,7 +261,8 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     final buf = StringBuffer();
     try {
       // Stream the response and show it as captions in real time
-      await for (final chunk in ApiService.streamChat(widget.customer.id, query)) {
+      await for (final chunk
+          in apiService.streamChat(widget.customer.id, query)) {
         if (_disposed) return;
         buf.write(chunk);
         if (mounted) setState(() => _botCaption = buf.toString());
@@ -378,7 +401,8 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
             Transform.scale(
               scale: _pulseAnim.value * 1.45,
               child: Container(
-                width: 88, height: 88,
+                width: 88,
+                height: 88,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: widget.avatarFg.withValues(alpha: 0.05),
@@ -388,7 +412,8 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
             Transform.scale(
               scale: _pulseAnim.value * 1.18,
               child: Container(
-                width: 88, height: 88,
+                width: 88,
+                height: 88,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: widget.avatarFg.withValues(alpha: 0.10),
@@ -397,7 +422,8 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
             ),
           ],
           Container(
-            width: 88, height: 88,
+            width: 88,
+            height: 88,
             decoration: BoxDecoration(
               color: widget.avatarBg,
               shape: BoxShape.circle,
@@ -450,7 +476,8 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
       children: [
         AnimatedContainer(
           duration: const Duration(milliseconds: 300),
-          width: 6, height: 6,
+          width: 6,
+          height: 6,
           decoration: BoxDecoration(color: _statusDot, shape: BoxShape.circle),
         ),
         const SizedBox(width: 7),
@@ -579,7 +606,8 @@ class _CallButton extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: size, height: size,
+            width: size,
+            height: size,
             decoration: BoxDecoration(color: bg, shape: BoxShape.circle),
             child: Icon(icon, color: iconColor, size: size * 0.38),
           ),

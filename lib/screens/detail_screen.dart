@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
+import 'package:voicebot_directory/store/api_store.dart';
 import '../models/app_colors.dart';
 import '../models/customer.dart';
 import '../services/api_service.dart';
@@ -34,12 +36,20 @@ class _DetailScreenState extends State<DetailScreen> {
   bool _isSending = false;
 
   static const _avatarBgs = [
-    Color(0xFFEDE9FE), Color(0xFFD1FAE5), Color(0xFFFFE4E6),
-    Color(0xFFFEF3C7), Color(0xFFDBEAFE), Color(0xFFFCE7F3),
+    Color(0xFFEDE9FE),
+    Color(0xFFD1FAE5),
+    Color(0xFFFFE4E6),
+    Color(0xFFFEF3C7),
+    Color(0xFFDBEAFE),
+    Color(0xFFFCE7F3),
   ];
   static const _avatarFgs = [
-    Color(0xFF6D28D9), Color(0xFF065F46), Color(0xFFBE123C),
-    Color(0xFFB45309), Color(0xFF1D4ED8), Color(0xFFBE185D),
+    Color(0xFF6D28D9),
+    Color(0xFF065F46),
+    Color(0xFFBE123C),
+    Color(0xFFB45309),
+    Color(0xFF1D4ED8),
+    Color(0xFFBE185D),
   ];
 
   Color get _bg => _avatarBgs[widget.colorIndex % _avatarBgs.length];
@@ -50,6 +60,21 @@ class _DetailScreenState extends State<DetailScreen> {
     _controller.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  bool _initialized = false;
+  late ApiService apiService;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+
+    if (!_initialized) {
+      final apiStore = context.read<ApiStore>();
+      apiService = ApiService(apiStore);
+
+      _initialized = true;
+    }
   }
 
   Future<void> _send() async {
@@ -63,10 +88,12 @@ class _DetailScreenState extends State<DetailScreen> {
       _isSending = true;
     });
     _scrollToBottom();
-    ChatHistoryStore.instance.record(widget.customer.id, widget.customer.name, widget.colorIndex, text);
+    ChatHistoryStore.instance.record(
+        widget.customer.id, widget.customer.name, widget.colorIndex, text);
 
     try {
-      await for (final chunk in ApiService.streamChat(widget.customer.id, text)) {
+      await for (final chunk
+          in apiService.streamChat(widget.customer.id, text)) {
         if (mounted) {
           setState(() => _messages.last.text += chunk);
           _scrollToBottom();
@@ -93,6 +120,9 @@ class _DetailScreenState extends State<DetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final apiStore = context.read<ApiStore>();
+    apiService = ApiService(apiStore);
+
     return Scaffold(
       backgroundColor: AppColors.background,
       body: Column(
@@ -115,7 +145,8 @@ class _DetailScreenState extends State<DetailScreen> {
           width: double.infinity,
           decoration: const BoxDecoration(
             gradient: LinearGradient(
-              begin: Alignment.topCenter, end: Alignment.bottomCenter,
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
               colors: [Color(0xFF6D28D9), Color(0xFF7C3AED), Color(0xFF8B5CF6)],
             ),
           ),
@@ -129,19 +160,23 @@ class _DetailScreenState extends State<DetailScreen> {
                   GestureDetector(
                     onTap: () => Navigator.pop(context),
                     child: Container(
-                      width: 36, height: 36,
+                      width: 36,
+                      height: 36,
                       decoration: BoxDecoration(
                         color: Colors.white.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(18),
                       ),
-                      child: const Icon(Icons.chevron_left, color: Colors.white, size: 22),
+                      child: const Icon(Icons.chevron_left,
+                          color: Colors.white, size: 22),
                     ),
                   ),
                   Flexible(
                     child: Text(
                       widget.customer.name,
                       style: GoogleFonts.plusJakartaSans(
-                        fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
                       ),
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -151,20 +186,28 @@ class _DetailScreenState extends State<DetailScreen> {
                       ListenableBuilder(
                         listenable: FavoritesStore.instance,
                         builder: (context, _) {
-                          final isFav = FavoritesStore.instance.isFavorite(widget.customer.id);
+                          final isFav = FavoritesStore.instance
+                              .isFavorite(widget.customer.id);
                           return GestureDetector(
                             onTap: () => FavoritesStore.instance.toggle(
-                              widget.customer.id, widget.customer.name, widget.colorIndex,
+                              widget.customer.id,
+                              widget.customer.name,
+                              widget.colorIndex,
                             ),
                             child: Container(
-                              width: 36, height: 36,
+                              width: 36,
+                              height: 36,
                               decoration: BoxDecoration(
                                 color: Colors.white.withValues(alpha: 0.1),
                                 borderRadius: BorderRadius.circular(18),
                               ),
                               child: Icon(
-                                isFav ? Icons.star_rounded : Icons.star_border_rounded,
-                                color: isFav ? const Color(0xFFFBBF24) : Colors.white,
+                                isFav
+                                    ? Icons.star_rounded
+                                    : Icons.star_border_rounded,
+                                color: isFav
+                                    ? const Color(0xFFFBBF24)
+                                    : Colors.white,
                                 size: 18,
                               ),
                             ),
@@ -190,7 +233,8 @@ class _DetailScreenState extends State<DetailScreen> {
                             color: Colors.white.withValues(alpha: 0.1),
                             borderRadius: BorderRadius.circular(18),
                           ),
-                          child: const Icon(Icons.call_rounded, color: Colors.white, size: 18),
+                          child: const Icon(Icons.call_rounded,
+                              color: Colors.white, size: 18),
                         ),
                       ),
                     ],
@@ -202,22 +246,30 @@ class _DetailScreenState extends State<DetailScreen> {
         ),
         Positioned(
           bottom: -44,
-          left: 0, right: 0,
+          left: 0,
+          right: 0,
           child: Center(
             child: Container(
               padding: const EdgeInsets.all(4),
               decoration: BoxDecoration(
                 color: Colors.white,
                 shape: BoxShape.circle,
-                boxShadow: [BoxShadow(color: const Color(0xFF7C3AED).withValues(alpha: 0.2), blurRadius: 20, spreadRadius: 2)],
+                boxShadow: [
+                  BoxShadow(
+                      color: const Color(0xFF7C3AED).withValues(alpha: 0.2),
+                      blurRadius: 20,
+                      spreadRadius: 2)
+                ],
               ),
               child: Container(
-                width: 76, height: 76,
+                width: 76,
+                height: 76,
                 decoration: BoxDecoration(color: _bg, shape: BoxShape.circle),
                 child: Center(
                   child: Text(
                     widget.customer.initials,
-                    style: GoogleFonts.plusJakartaSans(fontSize: 22, fontWeight: FontWeight.w800, color: _fg),
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 22, fontWeight: FontWeight.w800, color: _fg),
                   ),
                 ),
               ),
@@ -240,21 +292,25 @@ class _DetailScreenState extends State<DetailScreen> {
                 child: Text(
                   widget.customer.name,
                   style: GoogleFonts.plusJakartaSans(
-                    fontSize: 19, fontWeight: FontWeight.w700,
-                    color: AppColors.textPrimary, letterSpacing: -0.4,
+                    fontSize: 19,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textPrimary,
+                    letterSpacing: -0.4,
                   ),
                   overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.center,
                 ),
               ),
               const SizedBox(width: 6),
-              const Icon(Icons.verified_rounded, color: Color(0xFF7C3AED), size: 18),
+              const Icon(Icons.verified_rounded,
+                  color: Color(0xFF7C3AED), size: 18),
             ],
           ),
           const SizedBox(height: 4),
           Text(
             'AI Assistant',
-            style: GoogleFonts.plusJakartaSans(fontSize: 13, color: AppColors.textSecondary),
+            style: GoogleFonts.plusJakartaSans(
+                fontSize: 13, color: AppColors.textSecondary),
           ),
           const SizedBox(height: 12),
           const Divider(color: Color(0xFFF1F5F9), height: 1),
@@ -270,15 +326,18 @@ class _DetailScreenState extends State<DetailScreen> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Container(
-              width: 64, height: 64,
+              width: 64,
+              height: 64,
               decoration: BoxDecoration(color: _bg, shape: BoxShape.circle),
-              child: Icon(Icons.chat_bubble_outline_rounded, color: _fg, size: 28),
+              child:
+                  Icon(Icons.chat_bubble_outline_rounded, color: _fg, size: 28),
             ),
             const SizedBox(height: 12),
             Text(
               'Ask me anything about\n${widget.customer.name}',
               textAlign: TextAlign.center,
-              style: GoogleFonts.plusJakartaSans(fontSize: 14, color: AppColors.textSecondary),
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 14, color: AppColors.textSecondary),
             ),
           ],
         ),
@@ -298,17 +357,22 @@ class _DetailScreenState extends State<DetailScreen> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(
-        mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+        mainAxisAlignment:
+            isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           if (!isUser) ...[
             Container(
-              width: 28, height: 28,
+              width: 28,
+              height: 28,
               decoration: BoxDecoration(color: _bg, shape: BoxShape.circle),
               child: Center(
                 child: Text(
-                  widget.customer.initials.isNotEmpty ? widget.customer.initials[0] : '?',
-                  style: GoogleFonts.plusJakartaSans(fontSize: 11, fontWeight: FontWeight.w800, color: _fg),
+                  widget.customer.initials.isNotEmpty
+                      ? widget.customer.initials[0]
+                      : '?',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 11, fontWeight: FontWeight.w800, color: _fg),
                 ),
               ),
             ),
@@ -325,7 +389,12 @@ class _DetailScreenState extends State<DetailScreen> {
                   bottomLeft: Radius.circular(isUser ? 18 : 4),
                   bottomRight: Radius.circular(isUser ? 4 : 18),
                 ),
-                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 4, offset: const Offset(0, 2))],
+                boxShadow: [
+                  BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.05),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2))
+                ],
               ),
               child: message.text.isEmpty && !isUser
                   ? _buildTypingDots()
@@ -342,9 +411,12 @@ class _DetailScreenState extends State<DetailScreen> {
           if (isUser) ...[
             const SizedBox(width: 8),
             Container(
-              width: 28, height: 28,
-              decoration: const BoxDecoration(color: Color(0xFFEDE9FE), shape: BoxShape.circle),
-              child: const Icon(Icons.person_rounded, size: 16, color: Color(0xFF7C3AED)),
+              width: 28,
+              height: 28,
+              decoration: const BoxDecoration(
+                  color: Color(0xFFEDE9FE), shape: BoxShape.circle),
+              child: const Icon(Icons.person_rounded,
+                  size: 16, color: Color(0xFF7C3AED)),
             ),
           ],
         ],
@@ -355,23 +427,27 @@ class _DetailScreenState extends State<DetailScreen> {
   Widget _buildTypingDots() {
     return Row(
       mainAxisSize: MainAxisSize.min,
-      children: List.generate(3, (i) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 2),
-        child: Container(
-          width: 6, height: 6,
-          decoration: BoxDecoration(
-            color: AppColors.textSecondary.withValues(alpha: 0.4),
-            shape: BoxShape.circle,
-          ),
-        ),
-      )),
+      children: List.generate(
+          3,
+          (i) => Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 2),
+                child: Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: AppColors.textSecondary.withValues(alpha: 0.4),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              )),
     );
   }
 
   Widget _buildInputBar(BuildContext context) {
     return Container(
       color: Colors.white,
-      padding: EdgeInsets.fromLTRB(16, 12, 16, MediaQuery.of(context).padding.bottom + 12),
+      padding: EdgeInsets.fromLTRB(
+          16, 12, 16, MediaQuery.of(context).padding.bottom + 12),
       child: Row(
         children: [
           Expanded(
@@ -385,11 +461,14 @@ class _DetailScreenState extends State<DetailScreen> {
                 enabled: !_isSending,
                 decoration: InputDecoration(
                   hintText: 'Ask me anything...',
-                  hintStyle: GoogleFonts.plusJakartaSans(fontSize: 14, color: const Color(0xFF9CA3AF)),
+                  hintStyle: GoogleFonts.plusJakartaSans(
+                      fontSize: 14, color: const Color(0xFF9CA3AF)),
                   border: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                 ),
-                style: GoogleFonts.plusJakartaSans(fontSize: 14, color: AppColors.textPrimary),
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 14, color: AppColors.textPrimary),
                 maxLines: null,
                 textInputAction: TextInputAction.send,
                 onSubmitted: (_) => _send(),
@@ -400,13 +479,19 @@ class _DetailScreenState extends State<DetailScreen> {
           GestureDetector(
             onTap: _isSending ? null : _send,
             child: Container(
-              width: 48, height: 48,
+              width: 48,
+              height: 48,
               decoration: BoxDecoration(
                 color: _isSending ? const Color(0xFFD1D5DB) : AppColors.primary,
                 shape: BoxShape.circle,
-                boxShadow: _isSending ? null : [
-                  BoxShadow(color: AppColors.primary.withValues(alpha: 0.3), blurRadius: 12, offset: const Offset(0, 4)),
-                ],
+                boxShadow: _isSending
+                    ? null
+                    : [
+                        BoxShadow(
+                            color: AppColors.primary.withValues(alpha: 0.3),
+                            blurRadius: 12,
+                            offset: const Offset(0, 4)),
+                      ],
               ),
               child: Icon(
                 _isSending ? Icons.hourglass_top_rounded : Icons.send_rounded,
