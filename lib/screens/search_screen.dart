@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../models/app_colors.dart';
+import '../models/customer.dart';
 import '../models/voice_bot.dart';
 import 'detail_screen.dart';
 
@@ -201,7 +202,12 @@ class _SearchScreenState extends State<SearchScreen> {
                   child: GestureDetector(
                     onTap: () => Navigator.push(
                       context,
-                      MaterialPageRoute(builder: (_) => const DetailScreen()),
+                      MaterialPageRoute(
+                        builder: (_) => DetailScreen(
+                          customer: Customer(id: bot['sublabel'].toString().toLowerCase(), name: '${bot['label']} ${bot['sublabel']}'),
+                          colorIndex: index,
+                        ),
+                      ),
                     ),
                     child: Column(
                       children: [
@@ -294,7 +300,15 @@ class _SearchScreenState extends State<SearchScreen> {
     return GestureDetector(
       onTap: () => Navigator.push(
         context,
-        MaterialPageRoute(builder: (_) => const DetailScreen()),
+        MaterialPageRoute(
+          builder: (_) => DetailScreen(
+            customer: Customer(
+              id: bot.name.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '_'),
+              name: bot.name,
+            ),
+            colorIndex: searchBots.indexOf(bot),
+          ),
+        ),
       ),
       child: Container(
         margin: const EdgeInsets.only(bottom: 4),
@@ -308,7 +322,15 @@ class _SearchScreenState extends State<SearchScreen> {
             borderRadius: BorderRadius.circular(16),
             onTap: () => Navigator.push(
               context,
-              MaterialPageRoute(builder: (_) => const DetailScreen()),
+              MaterialPageRoute(
+                builder: (_) => DetailScreen(
+                  customer: Customer(
+                    id: bot.name.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '_'),
+                    name: bot.name,
+                  ),
+                  colorIndex: searchBots.indexOf(bot),
+                ),
+              ),
             ),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
