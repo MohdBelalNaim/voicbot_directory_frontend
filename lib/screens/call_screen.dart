@@ -41,8 +41,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
   bool _sttReady = false;
   bool _disposed = false;
   bool _listeningGuard = false;
-  bool _silenceHandled = false; // prevents onError + onStatus both triggering silence handler
-  String _lastPartial = '';
+  String _lastPartial = ''; // Chrome never fires final=true; we use this on notListening
 
   Duration _elapsed = Duration.zero;
   Timer? _callTimer;
@@ -119,11 +118,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
         onError: (e) {
           debugPrint('[STT] Error: ${e.errorMsg} permanent=${e.permanent}');
           if (_disposed || !mounted || _state != _CallState.listening) return;
-          if (e.errorMsg == 'no-speech' || e.errorMsg == 'audio-capture') {
-            _handleSilence();
-          } else {
-            Future.delayed(const Duration(seconds: 1), _startListening);
-          }
+          Future.delayed(const Duration(seconds: 1), _startListening);
         },
         onStatus: (status) {
           debugPrint('[STT] Status: $status  state=$_state guard=$_listeningGuard');
@@ -134,12 +129,14 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
               !_listeningGuard) {
             final words = _lastPartial.trim();
             if (words.isNotEmpty) {
+              // Chrome ended the session with accumulated partial text
               _lastPartial = '';
-              _silenceHandled = false;
               debugPrint('[STT] Using last partial as final: "$words"');
               _sendToBot(words);
             } else {
-              _handleSilence();
+              // Silence timeout — tell the user we're waiting instead of
+              // crashing by rapid-firing listen() again immediately.
+              _speakWaiting();
             }
           }
         },
@@ -180,16 +177,12 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     // Completion handler fires when done → calls _startListening
   }
 
-  // Called when STT times out with no speech detected.
-  // Speaks a gentle prompt so the user knows the bot is still active,
-  // then the TTS completion handler restarts listening automatically.
-  void _handleSilence() {
-    if (_disposed || !mounted || _muted || _silenceHandled) return;
-    _silenceHandled = true; // guard: onError + onStatus can both fire for no-speech
-    debugPrint('[CALL] Silence detected — speaking waiting prompt');
+  Future<void> _speakWaiting() async {
+    if (_disposed || !mounted || _muted) return;
+    debugPrint('[TTS] Speaking waiting prompt');
     setState(() => _state = _CallState.speaking);
-    _tts.speak("I'm waiting for your response. Go ahead.");
-    // TTS completion handler → _startListening, which resets _silenceHandled
+    await _tts.speak("I'm waiting for your response. Please go ahead.");
+    // Completion handler fires when done → calls _startListening
   }
 
   Future<void> _startListening() async {
@@ -206,15 +199,14 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
         _state = _CallState.listening;
         _userCaption = '';
         _botCaption = '';
-        _silenceHandled = false;
       });
       debugPrint('[STT] Calling listen()');
       await _stt.listen(
         onResult: _onSttResult,
         listenOptions: SpeechListenOptions(
           partialResults: true,
-          listenFor: const Duration(seconds: 10),
-          pauseFor: const Duration(seconds: 5),
+          listenFor: const Duration(seconds: 30),
+          pauseFor: const Duration(seconds: 2),
         ),
       );
       debugPrint('[STT] listen() returned  isListening=${_stt.isListening}');
@@ -369,7 +361,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
         style: GoogleFonts.plusJakartaSans(
           fontSize: 11,
           fontWeight: FontWeight.w600,
-          color: Colors.white.withOpacity(0.25),
+          color: Colors.white.withValues(alpha: 0.25),
           letterSpacing: 1.8,
         ),
       ),
@@ -389,7 +381,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
                 width: 88, height: 88,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: widget.avatarFg.withOpacity(0.05),
+                  color: widget.avatarFg.withValues(alpha: 0.05),
                 ),
               ),
             ),
@@ -399,7 +391,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
                 width: 88, height: 88,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: widget.avatarFg.withOpacity(0.10),
+                  color: widget.avatarFg.withValues(alpha: 0.10),
                 ),
               ),
             ),
@@ -444,7 +436,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
           style: GoogleFonts.plusJakartaSans(
             fontSize: 14,
             fontWeight: FontWeight.w400,
-            color: Colors.white.withOpacity(0.35),
+            color: Colors.white.withValues(alpha: 0.35),
             letterSpacing: 1.5,
           ),
         ),
@@ -469,7 +461,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
             key: ValueKey(_state),
             style: GoogleFonts.plusJakartaSans(
               fontSize: 13,
-              color: Colors.white.withOpacity(0.45),
+              color: Colors.white.withValues(alpha: 0.45),
               fontWeight: FontWeight.w400,
             ),
           ),
@@ -486,7 +478,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
       constraints: const BoxConstraints(maxHeight: 130),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.05),
+        color: Colors.white.withValues(alpha: 0.05),
         borderRadius: BorderRadius.circular(16),
       ),
       child: SingleChildScrollView(
@@ -499,7 +491,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
               Text('YOU',
                   style: GoogleFonts.plusJakartaSans(
                     fontSize: 10,
-                    color: Colors.white.withOpacity(0.3),
+                    color: Colors.white.withValues(alpha: 0.3),
                     fontWeight: FontWeight.w600,
                     letterSpacing: 0.8,
                   )),
@@ -507,7 +499,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
               Text(_userCaption,
                   style: GoogleFonts.plusJakartaSans(
                     fontSize: 13,
-                    color: Colors.white.withOpacity(0.6),
+                    color: Colors.white.withValues(alpha: 0.6),
                     height: 1.45,
                   )),
             ],
@@ -516,7 +508,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
               Text(widget.customer.name.toUpperCase(),
                   style: GoogleFonts.plusJakartaSans(
                     fontSize: 10,
-                    color: Colors.white.withOpacity(0.3),
+                    color: Colors.white.withValues(alpha: 0.3),
                     fontWeight: FontWeight.w600,
                     letterSpacing: 0.8,
                   )),
@@ -544,7 +536,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
           bg: const Color(0xFF1C1C2E),
           iconColor: _muted
               ? const Color(0xFF6B7280)
-              : Colors.white.withOpacity(0.9),
+              : Colors.white.withValues(alpha: 0.9),
           size: 58,
           onTap: _toggleMute,
         ),
@@ -595,7 +587,7 @@ class _CallButton extends StatelessWidget {
           Text(label,
               style: GoogleFonts.plusJakartaSans(
                 fontSize: 11,
-                color: Colors.white.withOpacity(0.35),
+                color: Colors.white.withValues(alpha: 0.35),
                 fontWeight: FontWeight.w500,
               )),
         ],

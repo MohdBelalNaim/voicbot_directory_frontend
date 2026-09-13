@@ -17,6 +17,16 @@ pluginManagement {
     }
 }
 
+// Centralise all dependency repositories so legacy packages that declare
+// jcenter() in their own build.gradle don't break the build on Gradle 9+.
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
 plugins {
     id("dev.flutter.flutter-plugin-loader") version "1.0.0"
     id("com.android.application") version "9.1.0" apply false
