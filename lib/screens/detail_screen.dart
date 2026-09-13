@@ -131,7 +131,7 @@ class _DetailScreenState extends State<DetailScreen> {
                     child: Container(
                       width: 36, height: 36,
                       decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.1),
+                        color: Colors.white.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(18),
                       ),
                       child: const Icon(Icons.chevron_left, color: Colors.white, size: 22),
@@ -159,7 +159,7 @@ class _DetailScreenState extends State<DetailScreen> {
                             child: Container(
                               width: 36, height: 36,
                               decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.1),
+                                color: Colors.white.withValues(alpha: 0.1),
                                 borderRadius: BorderRadius.circular(18),
                               ),
                               child: Icon(
@@ -187,7 +187,7 @@ class _DetailScreenState extends State<DetailScreen> {
                           width: 36,
                           height: 36,
                           decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.1),
+                            color: Colors.white.withValues(alpha: 0.1),
                             borderRadius: BorderRadius.circular(18),
                           ),
                           child: const Icon(Icons.call_rounded, color: Colors.white, size: 18),
@@ -209,7 +209,7 @@ class _DetailScreenState extends State<DetailScreen> {
               decoration: BoxDecoration(
                 color: Colors.white,
                 shape: BoxShape.circle,
-                boxShadow: [BoxShadow(color: const Color(0xFF7C3AED).withOpacity(0.2), blurRadius: 20, spreadRadius: 2)],
+                boxShadow: [BoxShadow(color: const Color(0xFF7C3AED).withValues(alpha: 0.2), blurRadius: 20, spreadRadius: 2)],
               ),
               child: Container(
                 width: 76, height: 76,
@@ -325,7 +325,7 @@ class _DetailScreenState extends State<DetailScreen> {
                   bottomLeft: Radius.circular(isUser ? 18 : 4),
                   bottomRight: Radius.circular(isUser ? 4 : 18),
                 ),
-                boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 4, offset: const Offset(0, 2))],
+                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 4, offset: const Offset(0, 2))],
               ),
               child: message.text.isEmpty && !isUser
                   ? _buildTypingDots()
@@ -360,7 +360,7 @@ class _DetailScreenState extends State<DetailScreen> {
         child: Container(
           width: 6, height: 6,
           decoration: BoxDecoration(
-            color: AppColors.textSecondary.withOpacity(0.4),
+            color: AppColors.textSecondary.withValues(alpha: 0.4),
             shape: BoxShape.circle,
           ),
         ),
@@ -405,7 +405,7 @@ class _DetailScreenState extends State<DetailScreen> {
                 color: _isSending ? const Color(0xFFD1D5DB) : AppColors.primary,
                 shape: BoxShape.circle,
                 boxShadow: _isSending ? null : [
-                  BoxShadow(color: AppColors.primary.withOpacity(0.3), blurRadius: 12, offset: const Offset(0, 4)),
+                  BoxShadow(color: AppColors.primary.withValues(alpha: 0.3), blurRadius: 12, offset: const Offset(0, 4)),
                 ],
               ),
               child: Icon(

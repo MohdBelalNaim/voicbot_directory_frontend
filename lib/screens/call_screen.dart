@@ -369,7 +369,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
         style: GoogleFonts.plusJakartaSans(
           fontSize: 11,
           fontWeight: FontWeight.w600,
-          color: Colors.white.withOpacity(0.25),
+          color: Colors.white.withValues(alpha: 0.25),
           letterSpacing: 1.8,
         ),
       ),
@@ -389,7 +389,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
                 width: 88, height: 88,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: widget.avatarFg.withOpacity(0.05),
+                  color: widget.avatarFg.withValues(alpha: 0.05),
                 ),
               ),
             ),
@@ -399,7 +399,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
                 width: 88, height: 88,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: widget.avatarFg.withOpacity(0.10),
+                  color: widget.avatarFg.withValues(alpha: 0.10),
                 ),
               ),
             ),
@@ -444,7 +444,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
           style: GoogleFonts.plusJakartaSans(
             fontSize: 14,
             fontWeight: FontWeight.w400,
-            color: Colors.white.withOpacity(0.35),
+            color: Colors.white.withValues(alpha: 0.35),
             letterSpacing: 1.5,
           ),
         ),
@@ -469,7 +469,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
             key: ValueKey(_state),
             style: GoogleFonts.plusJakartaSans(
               fontSize: 13,
-              color: Colors.white.withOpacity(0.45),
+              color: Colors.white.withValues(alpha: 0.45),
               fontWeight: FontWeight.w400,
             ),
           ),
@@ -486,7 +486,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
       constraints: const BoxConstraints(maxHeight: 130),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.05),
+        color: Colors.white.withValues(alpha: 0.05),
         borderRadius: BorderRadius.circular(16),
       ),
       child: SingleChildScrollView(
@@ -499,7 +499,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
               Text('YOU',
                   style: GoogleFonts.plusJakartaSans(
                     fontSize: 10,
-                    color: Colors.white.withOpacity(0.3),
+                    color: Colors.white.withValues(alpha: 0.3),
                     fontWeight: FontWeight.w600,
                     letterSpacing: 0.8,
                   )),
@@ -507,7 +507,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
               Text(_userCaption,
                   style: GoogleFonts.plusJakartaSans(
                     fontSize: 13,
-                    color: Colors.white.withOpacity(0.6),
+                    color: Colors.white.withValues(alpha: 0.6),
                     height: 1.45,
                   )),
             ],
@@ -516,7 +516,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
               Text(widget.customer.name.toUpperCase(),
                   style: GoogleFonts.plusJakartaSans(
                     fontSize: 10,
-                    color: Colors.white.withOpacity(0.3),
+                    color: Colors.white.withValues(alpha: 0.3),
                     fontWeight: FontWeight.w600,
                     letterSpacing: 0.8,
                   )),
@@ -544,7 +544,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
           bg: const Color(0xFF1C1C2E),
           iconColor: _muted
               ? const Color(0xFF6B7280)
-              : Colors.white.withOpacity(0.9),
+              : Colors.white.withValues(alpha: 0.9),
           size: 58,
           onTap: _toggleMute,
         ),
@@ -595,7 +595,7 @@ class _CallButton extends StatelessWidget {
           Text(label,
               style: GoogleFonts.plusJakartaSans(
                 fontSize: 11,
-                color: Colors.white.withOpacity(0.35),
+                color: Colors.white.withValues(alpha: 0.35),
                 fontWeight: FontWeight.w500,
               )),
         ],

@@ -4,7 +4,7 @@ import '../models/customer.dart';
 
 class ApiService {
   // Use http://10.0.2.2:8000 on Android emulator instead of localhost
-  static const String baseUrl = 'http://localhost:8000';
+  static const String baseUrl = 'http://192.168.1.209:8000';
 
   static List<Customer>? _cache;
 

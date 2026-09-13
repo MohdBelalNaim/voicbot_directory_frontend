@@ -111,7 +111,7 @@ class _SearchScreenState extends State<SearchScreen> {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(24),
-          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))],
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8, offset: const Offset(0, 2))],
         ),
         child: Row(
           children: [
@@ -178,8 +178,8 @@ class _SearchScreenState extends State<SearchScreen> {
                           decoration: BoxDecoration(
                             color: _bg(chat.colorIndex),
                             borderRadius: BorderRadius.circular(16),
-                            border: Border.all(color: _fg(chat.colorIndex).withOpacity(0.15)),
-                            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))],
+                            border: Border.all(color: _fg(chat.colorIndex).withValues(alpha: 0.15)),
+                            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8, offset: const Offset(0, 2))],
                           ),
                           child: Center(
                             child: Text(c.initials,

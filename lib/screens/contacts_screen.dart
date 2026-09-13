@@ -54,10 +54,10 @@ class _ContactsScreenState extends State<ContactsScreen> {
           slivers: [
             SliverToBoxAdapter(child: _buildHeader(context)),
             if (_loading)
-              SliverToBoxAdapter(
+              const SliverToBoxAdapter(
                 child: SizedBox(
                   height: 400,
-                  child: const Center(child: CircularProgressIndicator(color: AppColors.primary)),
+                  child: Center(child: CircularProgressIndicator(color: AppColors.primary)),
                 ),
               )
             else if (_error != null)
@@ -117,7 +117,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
         decoration: BoxDecoration(
           color: const Color(0xFFF1F5F9),
           borderRadius: BorderRadius.circular(18),
-          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 4, offset: const Offset(0, 1))],
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 4, offset: const Offset(0, 1))],
         ),
         child: Icon(icon, color: const Color(0xFF475569), size: 20),
       ),
