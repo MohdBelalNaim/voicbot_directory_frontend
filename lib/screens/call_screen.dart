@@ -211,9 +211,11 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
       debugPrint('[STT] Calling listen()');
       await _stt.listen(
         onResult: _onSttResult,
-        listenFor: const Duration(seconds: 10),
-        pauseFor: const Duration(seconds: 5),
-        listenOptions: SpeechListenOptions(partialResults: true),
+        listenOptions: SpeechListenOptions(
+          partialResults: true,
+          listenFor: const Duration(seconds: 10),
+          pauseFor: const Duration(seconds: 5),
+        ),
       );
       debugPrint('[STT] listen() returned  isListening=${_stt.isListening}');
     } finally {
