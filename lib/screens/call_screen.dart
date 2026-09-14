@@ -43,8 +43,10 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
   bool _sttReady = false;
   bool _disposed = false;
   bool _listeningGuard = false;
-  String _lastPartial =
-      ''; // Chrome never fires final=true; we use this on notListening
+  String _lastPartial = '';
+  int _consecutiveSilences = 0;
+  Timer? _ttsSafetyTimer; // Fallback if TTS completion handler never fires
+  Timer? _chunkFlushTimer; // Forces pending text to TTS if no split point found
 
   Duration _elapsed = Duration.zero;
   Timer? _callTimer;
@@ -92,29 +94,18 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
       _tts.setStartHandler(() => debugPrint('[TTS] Speaking started'));
 
       _tts.setCompletionHandler(() {
-        debugPrint('[TTS] Completion. muted=$_muted botBusy=$_botBusy queue=${_ttsQueue.length}');
-        if (_disposed || !mounted) return;
-        if (_muted) {
-          setState(() => _state = _CallState.muted);
-          return;
-        }
-        // If we're mid-bot-response, drain the sentence queue; otherwise go to listening.
-        if (_botBusy || _ttsQueue.isNotEmpty) {
-          _flushTtsQueue();
-        } else {
-          _startListening();
-        }
+        debugPrint(
+            '[TTS] Completion. muted=$_muted botBusy=$_botBusy queue=${_ttsQueue.length}');
+        _ttsSafetyTimer?.cancel();
+        _onTtsDone();
       });
 
       _tts.setErrorHandler((msg) {
         debugPrint('[TTS] Error: $msg');
+        _ttsSafetyTimer?.cancel();
         if (_disposed || !mounted) return;
         if (msg == 'interrupted') return; // caused by our own stop() — ignore
-        if (_botBusy || _ttsQueue.isNotEmpty) {
-          _flushTtsQueue();
-        } else if (!_muted) {
-          _startListening();
-        }
+        _onTtsDone();
       });
 
       debugPrint('[TTS] Setup complete');
@@ -129,27 +120,55 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
       _sttReady = await _stt.initialize(
         onError: (e) {
           debugPrint('[STT] Error: ${e.errorMsg} permanent=${e.permanent}');
-          if (_disposed || !mounted || _state != _CallState.listening) return;
-          Future.delayed(const Duration(seconds: 1), _startListening);
+          if (_disposed ||
+              !mounted ||
+              _state != _CallState.listening ||
+              _botBusy) {
+            return;
+          }
+          Future.delayed(const Duration(seconds: 1), () {
+            if (!_disposed &&
+                mounted &&
+                _state == _CallState.listening &&
+                !_botBusy &&
+                !_muted) {
+              _startListening();
+            }
+          });
         },
         onStatus: (status) {
           debugPrint(
-              '[STT] Status: $status  state=$_state guard=$_listeningGuard');
+              '[STT] Status: $status  state=$_state guard=$_listeningGuard botBusy=$_botBusy');
           if (_disposed || !mounted) return;
           if ((status == 'done' || status == 'notListening') &&
               _state == _CallState.listening &&
               !_muted &&
-              !_listeningGuard) {
+              !_listeningGuard &&
+              !_botBusy) {
             final words = _lastPartial.trim();
+            _lastPartial = ''; // Clear immediately to avoid re-triggering
             if (words.isNotEmpty) {
-              // Chrome ended the session with accumulated partial text
-              _lastPartial = '';
-              debugPrint('[STT] Using last partial as final: "$words"');
+              _consecutiveSilences = 0;
+              debugPrint('[STT] Using recognized text: "$words"');
               _sendToBot(words);
             } else {
-              // Silence timeout — tell the user we're waiting instead of
-              // crashing by rapid-firing listen() again immediately.
-              _speakWaiting();
+              // User delayed or didn't speak: don't immediately blast waiting prompt.
+              // Smoothly restart listening, and only prompt after multiple silences.
+              _consecutiveSilences++;
+              if (_consecutiveSilences >= 3) {
+                _consecutiveSilences = 0;
+                _speakWaiting();
+              } else {
+                Future.delayed(const Duration(milliseconds: 300), () {
+                  if (!_disposed &&
+                      mounted &&
+                      _state == _CallState.listening &&
+                      !_botBusy &&
+                      !_muted) {
+                    _startListening();
+                  }
+                });
+              }
             }
           }
         },
@@ -179,37 +198,84 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
 
   // ── Voice flow ───────────────────────────────────────────────────────────────
 
+  /// Central handler when TTS finishes (or errors out). Drives the state machine
+  /// forward: drains queue → when done, transitions to listening.
+  void _onTtsDone() {
+    if (_disposed || !mounted) return;
+    if (_muted) {
+      setState(() => _state = _CallState.muted);
+      return;
+    }
+    if (_botBusy || _ttsQueue.isNotEmpty) {
+      _flushTtsQueue();
+    } else {
+      Future.delayed(const Duration(milliseconds: 300), () {
+        if (!_disposed && mounted && !_botBusy && !_muted) {
+          _startListening();
+        }
+      });
+    }
+  }
+
+  /// Starts TTS and arms a safety timer. If the completion handler never fires
+  /// (known issue on Web), the safety timer will drive the state forward.
+  void _speakWithSafety(String text) {
+    setState(() => _state = _CallState.speaking);
+    _ttsSafetyTimer?.cancel();
+    // Estimate ~80ms per character + 3s buffer
+    final estimatedMs = (text.length * 80) + 3000;
+    _ttsSafetyTimer = Timer(Duration(milliseconds: estimatedMs), () {
+      debugPrint('[TTS] Safety timer fired — completion handler did not fire for: "${text.substring(0, text.length.clamp(0, 40))}..."');
+      if (!_disposed && mounted) {
+        _onTtsDone();
+      }
+    });
+    _tts.speak(text);
+  }
+
   Future<void> _playWelcome() async {
     if (_disposed || !mounted) return;
     _startTimer();
-    setState(() => _state = _CallState.speaking);
+    try {
+      if (_stt.isListening) await _stt.stop();
+    } catch (_) {}
+    _lastPartial = '';
     final text = 'Hello from ${widget.customer.name}';
     debugPrint('[TTS] Speaking welcome: "$text"');
-    final result = await _tts.speak(text);
-    debugPrint('[TTS] speak() returned: $result');
-    // Completion handler fires when done → calls _startListening
+    _speakWithSafety(text);
   }
 
   Future<void> _speakWaiting() async {
-    if (_disposed || !mounted || _muted) return;
+    if (_disposed || !mounted || _muted || _botBusy) return;
     debugPrint('[TTS] Speaking waiting prompt');
-    setState(() => _state = _CallState.speaking);
-    await _tts.speak("I'm waiting for your response. Please go ahead.");
-    // Completion handler fires when done → calls _startListening
+    try {
+      if (_stt.isListening) await _stt.stop();
+    } catch (_) {}
+    _lastPartial = '';
+    _speakWithSafety("I'm waiting for your response. Please go ahead.");
   }
 
   Future<void> _startListening() async {
     debugPrint(
-        '[STT] _startListening  ready=$_sttReady muted=$_muted guard=$_listeningGuard');
-    if (_disposed || !mounted || !_sttReady || _muted || _listeningGuard)
+        '[STT] _startListening  ready=$_sttReady muted=$_muted guard=$_listeningGuard botBusy=$_botBusy');
+    if (_disposed ||
+        !mounted ||
+        !_sttReady ||
+        _muted ||
+        _listeningGuard ||
+        _botBusy) {
       return;
+    }
     _listeningGuard = true;
+    _lastPartial = '';
     try {
       if (_stt.isListening) {
         await _stt.stop();
         await Future.delayed(const Duration(milliseconds: 150));
       }
-      if (_disposed || !mounted || _muted) return;
+      if (_disposed || !mounted || _muted || _botBusy) {
+        return;
+      }
       setState(() {
         _state = _CallState.listening;
         _userCaption = '';
@@ -220,8 +286,9 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
         onResult: _onSttResult,
         listenOptions: SpeechListenOptions(
           partialResults: true,
-          listenFor: const Duration(seconds: 30),
-          pauseFor: const Duration(seconds: 2),
+          listenFor: const Duration(seconds: 45),
+          pauseFor: const Duration(seconds: 4),
+          cancelOnError: false,
         ),
       );
       debugPrint('[STT] listen() returned  isListening=${_stt.isListening}');
@@ -233,15 +300,16 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
   void _onSttResult(SpeechRecognitionResult result) {
     debugPrint(
         '[STT] Result: "${result.recognizedWords}"  final=${result.finalResult}');
-    if (_disposed || !mounted) return;
-    // Track latest partial so we can use it if Chrome ends without final=true
+    if (_disposed || !mounted || _state != _CallState.listening || _botBusy) {
+      return;
+    }
     _lastPartial = result.recognizedWords;
     setState(() => _userCaption = result.recognizedWords);
-    if (result.finalResult &&
-        result.recognizedWords.trim().isNotEmpty &&
-        _state == _CallState.listening) {
+    if (result.finalResult && result.recognizedWords.trim().isNotEmpty) {
+      final words = result.recognizedWords.trim();
       _lastPartial = '';
-      _sendToBot(result.recognizedWords.trim());
+      _consecutiveSilences = 0;
+      _sendToBot(words);
     }
   }
 
@@ -266,30 +334,53 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
   }
 
   // Speaks the next queued sentence, or transitions back to listening when done.
-  // Safe to call from the TTS completion handler (state is still speaking then).
   void _flushTtsQueue() {
     if (_disposed || !mounted || _muted) return;
     if (_ttsQueue.isNotEmpty) {
       final sentence = _ttsQueue.removeAt(0);
-      debugPrint('[TTS] Speaking queued sentence (${_ttsQueue.length} remaining): "$sentence"');
-      setState(() => _state = _CallState.speaking);
-      _tts.speak(sentence);
+      debugPrint(
+          '[TTS] Speaking queued sentence (${_ttsQueue.length} remaining): "$sentence"');
+      _speakWithSafety(sentence);
     } else if (_streamDone) {
       debugPrint('[TTS] Queue empty, stream done — going to listening');
       _botBusy = false;
-      if (!_muted) _startListening();
+      if (!_muted) {
+        Future.delayed(const Duration(milliseconds: 300), () {
+          if (!_disposed && mounted && !_botBusy && !_muted) {
+            _startListening();
+          }
+        });
+      }
     } else {
       // TTS caught up with the stream; _extractSentencesToQueue will resume us.
       setState(() => _state = _CallState.processing);
     }
   }
 
-  // Pulls complete sentences out of _pendingChunk into _ttsQueue and triggers TTS.
+  // Pulls speakable fragments out of _pendingChunk into _ttsQueue.
+  // Split points (in priority order):
+  //   1. Sentence endings  →  .!? followed by whitespace or end
+  //   2. Newlines
+  //   3. Clause boundaries →  ,;: followed by a space (only when accumulated text > 40 chars)
+  // A 1.5 s flush timer catches text that never hits a split point.
   void _extractSentencesToQueue() {
+    _chunkFlushTimer?.cancel();
     bool added = false;
+
     while (true) {
-      final match = RegExp(r'[.!?]+\s+').firstMatch(_pendingChunk);
+      // 1. Sentence endings (.!?) followed by whitespace
+      RegExpMatch? match = RegExp(r'[.!?]+\s+').firstMatch(_pendingChunk);
+
+      // 2. Newlines
+      match ??= RegExp(r'\n+').firstMatch(_pendingChunk);
+
+      // 3. Clause boundaries when text is getting long
+      if (match == null && _pendingChunk.length > 40) {
+        match = RegExp(r'[,;:]\s+').firstMatch(_pendingChunk);
+      }
+
       if (match == null) break;
+
       final sentence = _pendingChunk.substring(0, match.end).trim();
       _pendingChunk = _pendingChunk.substring(match.end);
       if (sentence.isNotEmpty) {
@@ -297,7 +388,28 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
         added = true;
       }
     }
+
     if (added && _state != _CallState.speaking) {
+      _flushTtsQueue();
+    }
+
+    // If text is accumulating without any split point, speak it after a delay
+    if (_pendingChunk.trim().isNotEmpty) {
+      _chunkFlushTimer = Timer(const Duration(milliseconds: 1500), () {
+        _forceFlushPending();
+      });
+    }
+  }
+
+  // Speaks whatever has accumulated in _pendingChunk, regardless of punctuation.
+  void _forceFlushPending() {
+    if (_disposed || !mounted) return;
+    final text = _pendingChunk.trim();
+    if (text.isEmpty) return;
+    debugPrint('[TTS] Force-flushing pending text (${text.length} chars)');
+    _pendingChunk = '';
+    _ttsQueue.add(text);
+    if (_state != _CallState.speaking) {
       _flushTtsQueue();
     }
   }
@@ -309,6 +421,19 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     _streamDone = false;
     _ttsQueue.clear();
     _pendingChunk = '';
+    _lastPartial = '';
+    _consecutiveSilences = 0;
+    _chunkFlushTimer?.cancel();
+
+    // Immediately stop STT to prevent mic picking up TTS / room feedback
+    try {
+      if (_stt.isListening) {
+        await _stt.stop();
+      }
+    } catch (e) {
+      debugPrint('[STT] Stop error: $e');
+    }
+
     setState(() {
       _state = _CallState.processing;
       _userCaption = query;
@@ -317,7 +442,8 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
 
     final buf = StringBuffer();
     try {
-      await for (final chunk in apiService.streamChat(widget.customer.id, query)) {
+      await for (final chunk
+          in apiService.streamChat(widget.customer.id, query)) {
         if (_disposed) return;
         buf.write(chunk);
         _pendingChunk += chunk;
@@ -327,6 +453,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
       }
 
       if (_disposed || !mounted) return;
+      _chunkFlushTimer?.cancel();
 
       // Speak any remaining text that didn't end with punctuation
       final tail = _pendingChunk.trim();
@@ -336,7 +463,8 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
       }
 
       _streamDone = true;
-      debugPrint('[BOT] Stream done. queue=${_ttsQueue.length} speaking=${_state == _CallState.speaking}');
+      debugPrint(
+          '[BOT] Stream done. queue=${_ttsQueue.length} speaking=${_state == _CallState.speaking}');
 
       if (buf.toString().trim().isEmpty) {
         _botBusy = false;
@@ -361,10 +489,12 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     if (_muted) {
       setState(() => _muted = false);
       if (_stt.isListening) await _stt.stop();
+      _lastPartial = '';
       _startListening();
     } else {
       if (_stt.isListening) await _stt.stop();
       if (_disposed || !mounted) return;
+      _lastPartial = '';
       setState(() {
         _muted = true;
         if (_state == _CallState.listening) _state = _CallState.muted;
@@ -375,6 +505,10 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
   Future<void> _endCall() async {
     _disposed = true;
     _callTimer?.cancel();
+    _ttsSafetyTimer?.cancel();
+    _chunkFlushTimer?.cancel();
+    _lastPartial = '';
+    _ttsQueue.clear();
     await _stt.stop();
     await _tts.stop();
     if (mounted) Navigator.pop(context);
@@ -384,6 +518,8 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
   void dispose() {
     _disposed = true;
     _callTimer?.cancel();
+    _ttsSafetyTimer?.cancel();
+    _chunkFlushTimer?.cancel();
     _pulseCtrl.dispose();
     _stt.stop();
     _tts.stop();

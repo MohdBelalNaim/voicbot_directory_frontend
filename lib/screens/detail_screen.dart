@@ -73,6 +73,9 @@ class _DetailScreenState extends State<DetailScreen> {
       final apiStore = context.read<ApiStore>();
       apiService = ApiService(apiStore);
 
+      // Pre-load company data on backend as soon as user opens this screen.
+      apiService.initCompany(widget.customer.id);
+
       _initialized = true;
     }
   }

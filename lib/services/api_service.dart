@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:voicebot_directory/store/api_store.dart';
 import '../models/customer.dart';
@@ -35,6 +36,22 @@ class ApiService {
       return customers;
     }
     throw Exception('Failed to load customers (${response.statusCode})');
+  }
+
+  /// Pre-loads company data on the backend so the first chat query is fast.
+  Future<void> initCompany(String companyId) async {
+    final uri = Uri.parse('$baseUrl/init').replace(
+      queryParameters: {'company_id': companyId},
+    );
+    try {
+      final response =
+          await http.get(uri).timeout(const Duration(seconds: 10));
+      if (response.statusCode != 200) {
+        debugPrint('[API] initCompany failed (${response.statusCode})');
+      }
+    } catch (e) {
+      debugPrint('[API] initCompany error: $e');
+    }
   }
 
   Stream<String> streamChat(String companyId, String query) async* {
