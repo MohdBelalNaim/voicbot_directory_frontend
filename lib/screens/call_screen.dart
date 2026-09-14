@@ -44,9 +44,13 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
   bool _disposed = false;
   bool _listeningGuard = false;
   String _lastPartial = '';
+  String _committedText = ''; // Speech carried across engine restarts this turn
   int _consecutiveSilences = 0;
   Timer? _ttsSafetyTimer; // Fallback if TTS completion handler never fires
   Timer? _chunkFlushTimer; // Forces pending text to TTS if no split point found
+  Timer? _silenceTimer; // Fires 2s after the user stops → sends the transcript
+
+  static const _silenceWindow = Duration(milliseconds:850);
 
   Duration _elapsed = Duration.zero;
   Timer? _callTimer;
@@ -78,7 +82,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     debugPrint('[TTS] Setting up...');
     try {
       await _tts.setLanguage('en-US');
-      await _tts.setSpeechRate(0.5);
+      await _tts.setSpeechRate(kIsWeb ? 0.8 : 0.5);
       await _tts.setPitch(1.0);
       await _tts.setVolume(1.0);
 
@@ -145,29 +149,23 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
               !_muted &&
               !_listeningGuard &&
               !_botBusy) {
-            final words = _lastPartial.trim();
-            _lastPartial = ''; // Clear immediately to avoid re-triggering
-            if (words.isNotEmpty) {
-              _consecutiveSilences = 0;
-              debugPrint('[STT] Using recognized text: "$words"');
-              _sendToBot(words);
+            // The engine stopped on its own (its internal timeout, or the
+            // browser ending the session on silence). We do NOT send here —
+            // the 2s silence timer is the sole trigger for sending. Instead we
+            // resume listening so the mic stays continuously open.
+            final hasSpeech =
+                (_silenceTimer?.isActive ?? false) ||
+                    _effectiveTranscript.isNotEmpty;
+            if (hasSpeech) {
+              _restartListeningContinuous();
             } else {
-              // User delayed or didn't speak: don't immediately blast waiting prompt.
-              // Smoothly restart listening, and only prompt after multiple silences.
+              // Nothing heard at all. Nudge the user after repeated silence.
               _consecutiveSilences++;
               if (_consecutiveSilences >= 3) {
                 _consecutiveSilences = 0;
                 _speakWaiting();
               } else {
-                Future.delayed(const Duration(milliseconds: 300), () {
-                  if (!_disposed &&
-                      mounted &&
-                      _state == _CallState.listening &&
-                      !_botBusy &&
-                      !_muted) {
-                    _startListening();
-                  }
-                });
+                _restartListeningContinuous();
               }
             }
           }
@@ -222,6 +220,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
   void _speakWithSafety(String text) {
     setState(() => _state = _CallState.speaking);
     _ttsSafetyTimer?.cancel();
+    _silenceTimer?.cancel();
     // Estimate ~80ms per character + 3s buffer
     final estimatedMs = (text.length * 80) + 3000;
     _ttsSafetyTimer = Timer(Duration(milliseconds: estimatedMs), () {
@@ -255,9 +254,9 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     _speakWithSafety("I'm waiting for your response. Please go ahead.");
   }
 
-  Future<void> _startListening() async {
+  Future<void> _startListening({bool continueSession = false}) async {
     debugPrint(
-        '[STT] _startListening  ready=$_sttReady muted=$_muted guard=$_listeningGuard botBusy=$_botBusy');
+        '[STT] _startListening  ready=$_sttReady muted=$_muted guard=$_listeningGuard botBusy=$_botBusy continue=$continueSession');
     if (_disposed ||
         !mounted ||
         !_sttReady ||
@@ -268,6 +267,11 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     }
     _listeningGuard = true;
     _lastPartial = '';
+    if (!continueSession) {
+      // Fresh turn: drop anything carried over and clear the silence window.
+      _committedText = '';
+      _silenceTimer?.cancel();
+    }
     try {
       if (_stt.isListening) {
         await _stt.stop();
@@ -278,16 +282,18 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
       }
       setState(() {
         _state = _CallState.listening;
-        _userCaption = '';
-        _botCaption = '';
+        _userCaption = continueSession ? _committedText : '';
+        if (!continueSession) _botCaption = '';
       });
       debugPrint('[STT] Calling listen()');
       await _stt.listen(
         onResult: _onSttResult,
         listenOptions: SpeechListenOptions(
           partialResults: true,
-          listenFor: const Duration(seconds: 45),
-          pauseFor: const Duration(seconds: 4),
+          // Keep the session open long enough that the engine won't cut the
+          // user off mid-turn; our own 2s silence timer decides when to send.
+          listenFor: const Duration(seconds: 60),
+          pauseFor: const Duration(seconds: 10),
           cancelOnError: false,
         ),
       );
@@ -304,13 +310,51 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
       return;
     }
     _lastPartial = result.recognizedWords;
-    setState(() => _userCaption = result.recognizedWords);
-    if (result.finalResult && result.recognizedWords.trim().isNotEmpty) {
-      final words = result.recognizedWords.trim();
-      _lastPartial = '';
-      _consecutiveSilences = 0;
-      _sendToBot(words);
+    setState(() => _userCaption = _effectiveTranscript);
+    // Any speech activity resets the 2s silence window. We never send on
+    // finalResult directly — the timer decides, so a user can pause between
+    // sentences without being cut off.
+    if (result.recognizedWords.trim().isNotEmpty) {
+      _armSilenceTimer();
     }
+  }
+
+  // Full transcript for the current turn: text carried across engine restarts
+  // plus whatever the live session has recognized so far.
+  String get _effectiveTranscript =>
+      ('$_committedText $_lastPartial').trim();
+
+  // (Re)starts the 2s countdown. When it elapses with no new speech, the
+  // accumulated transcript is sent to the bot.
+  void _armSilenceTimer() {
+    _silenceTimer?.cancel();
+    _silenceTimer = Timer(_silenceWindow, () {
+      if (_disposed || !mounted || _muted || _botBusy) return;
+      final words = _effectiveTranscript;
+      if (words.isNotEmpty) {
+        _consecutiveSilences = 0;
+        _sendToBot(words);
+      }
+    });
+  }
+
+  // Keeps the mic "continuously" open across an engine-initiated stop: banks
+  // any recognized words and resumes a fresh listen session without treating
+  // it as a new turn (so the transcript and captions persist).
+  void _restartListeningContinuous() {
+    if (_lastPartial.trim().isNotEmpty) {
+      _committedText = _effectiveTranscript;
+      _lastPartial = '';
+    }
+    Future.delayed(const Duration(milliseconds: 150), () {
+      if (!_disposed &&
+          mounted &&
+          _state == _CallState.listening &&
+          !_botBusy &&
+          !_muted) {
+        _startListening(continueSession: true);
+      }
+    });
   }
 
   bool _botBusy = false;
@@ -422,8 +466,10 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     _ttsQueue.clear();
     _pendingChunk = '';
     _lastPartial = '';
+    _committedText = '';
     _consecutiveSilences = 0;
     _chunkFlushTimer?.cancel();
+    _silenceTimer?.cancel();
 
     // Immediately stop STT to prevent mic picking up TTS / room feedback
     try {
@@ -490,11 +536,14 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
       setState(() => _muted = false);
       if (_stt.isListening) await _stt.stop();
       _lastPartial = '';
+      _committedText = '';
       _startListening();
     } else {
       if (_stt.isListening) await _stt.stop();
       if (_disposed || !mounted) return;
       _lastPartial = '';
+      _committedText = '';
+      _silenceTimer?.cancel();
       setState(() {
         _muted = true;
         if (_state == _CallState.listening) _state = _CallState.muted;
@@ -507,6 +556,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     _callTimer?.cancel();
     _ttsSafetyTimer?.cancel();
     _chunkFlushTimer?.cancel();
+    _silenceTimer?.cancel();
     _lastPartial = '';
     _ttsQueue.clear();
     await _stt.stop();
@@ -520,6 +570,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     _callTimer?.cancel();
     _ttsSafetyTimer?.cancel();
     _chunkFlushTimer?.cancel();
+    _silenceTimer?.cancel();
     _pulseCtrl.dispose();
     _stt.stop();
     _tts.stop();
