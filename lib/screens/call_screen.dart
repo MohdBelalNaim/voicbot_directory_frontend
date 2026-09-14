@@ -1,5 +1,8 @@
 import 'dart:async';
 import 'dart:io' show Platform;
+import 'dart:js_interop';
+import 'dart:js_interop_unsafe';
+import 'package:web/web.dart' as web;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -150,20 +153,12 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
           if (_disposed || !mounted) return;
 
           // On web, SpeechRecognition auto-stops after a few seconds of silence.
-          // Restart the shadow listener if we're still in speaking state.
+          // The JS shadow listener handles its own restart via onend.
+          // This branch handles the speech_to_text managed instance only.
           if (_interruptionEnabled &&
               (status == 'done' || status == 'notListening') &&
-              _state == _CallState.speaking &&
-              !_handlingInterruption &&
-              !_shadowTransitioning &&
-              _shadowListening) {
-            _shadowListening = false;
-            Future.delayed(const Duration(milliseconds: 100), () {
-              if (!_disposed && mounted && _state == _CallState.speaking &&
-                  !_handlingInterruption && !_shadowTransitioning) {
-                _startInterruptionListener();
-              }
-            });
+              _state == _CallState.speaking) {
+            // Shadow is managed by its own JS onend — nothing to do here.
             return;
           }
 
@@ -223,6 +218,9 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
   /// forward: drains queue → when done, transitions to listening.
   Future<void> _onTtsDone() async {
     if (_disposed || !mounted) return;
+    // If interruption already handled the transition, nothing to do.
+    if (_handlingInterruption) return;
+    if (_state != _CallState.speaking && _state != _CallState.processing) return;
     if (_muted) {
       setState(() => _state = _CallState.muted);
       return;
@@ -238,11 +236,9 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
   /// session. Centralised so every code path uses the same safe handoff.
   Future<void> _stopShadowAndListen({bool continueSession = false}) async {
     if (_disposed || !mounted) return;
-    // Raise transitioning flag FIRST — blocks onStatus restart and new shadow starts.
     _shadowTransitioning = true;
     _shadowListening = false;
-    try { await _stt.stop(); } catch (_) {}
-    // Small gap lets the browser release the audio stream fully.
+    _teardownVad();
     await Future.delayed(const Duration(milliseconds: 300));
     _shadowTransitioning = false;
     if (!_disposed && mounted && !_botBusy && !_muted) {
@@ -265,7 +261,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
       }
     });
     _tts.speak(text);
-    _startInterruptionListener();
+    _startVadListener();
   }
 
   Future<void> _playWelcome() async {
@@ -435,39 +431,137 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     }
   }
 
-  // ── Interruption feature ─────────────────────────────────────────────────────
+  // ── Interruption feature (WebRTC VAD via AudioWorklet) ──────────────────────
 
-  String _interruptionBuffer = '';
   bool _handlingInterruption = false;
-  bool _shadowListening = false; // set synchronously to prevent double-start
-  bool _shadowTransitioning = false; // blocks all shadow restarts during handoff
+  bool _shadowListening = false;
+  bool _shadowTransitioning = false;
 
-  Future<void> _startInterruptionListener() async {
+  web.MediaStream?  _vadStream;
+  web.AudioContext? _vadContext;
+  // No timer needed — AudioWorklet posts a message when speech is detected.
+
+  void _startVadListener() {
     if (!_interruptionEnabled) return;
-    if (_disposed || !mounted || !_sttReady || _muted) return;
+    if (_disposed || !mounted || _muted) return;
     if (_shadowListening || _handlingInterruption || _shadowTransitioning) return;
-    _shadowListening = true; // set BEFORE await — blocks any concurrent call
-    debugPrint('[INTERRUPT] Starting shadow listener');
+
+    // On native (Android/iOS) use speech_to_text directly — no AudioWorklet needed.
+    if (!kIsWeb) {
+      _startNativeShadowListener();
+      return;
+    }
+
+    _shadowListening = true;
+    debugPrint('[VAD] Starting AudioWorklet VAD listener');
+
+    final constraints = web.MediaStreamConstraints(audio: true.toJS);
+    web.window.navigator.mediaDevices
+        .getUserMedia(constraints)
+        .toDart
+        .then((stream) {
+          if (!_shadowListening || _shadowTransitioning || _handlingInterruption ||
+              _disposed || !mounted) {
+            _stopMediaStream(stream);
+            return;
+          }
+          _vadStream = stream;
+          _setupVadWorklet(stream);
+        })
+        .catchError((Object e) {
+          debugPrint('[VAD] getUserMedia denied: $e');
+          _shadowListening = false;
+        });
+  }
+
+  void _setupVadWorklet(web.MediaStream stream) {
+    try {
+      final ctx = web.AudioContext();
+      _vadContext = ctx;
+
+      // Load the AudioWorklet processor from web/vad_worklet.js
+      ctx.audioWorklet.addModule('vad_worklet.js').toDart.then((_) {
+        if (!_shadowListening || _shadowTransitioning || _handlingInterruption ||
+            _disposed || !mounted) {
+          _teardownVad();
+          return;
+        }
+        try {
+          final source = ctx.createMediaStreamSource(stream);
+          final node   = web.AudioWorkletNode(ctx, 'vad-processor');
+
+          // Receive speech detection messages from the audio thread
+          node.port.onmessage = ((web.MessageEvent event) {
+            if (!_shadowListening || _shadowTransitioning || _handlingInterruption ||
+                _state != _CallState.speaking || _disposed || !mounted || _muted) {
+              return;
+            }
+            final data = event.data as JSObject?;
+            if (data == null) return;
+            final type = data.getProperty<JSString?>('type'.toJS)?.toDart;
+            if (type == 'speech') {
+              debugPrint('[VAD] Speech detected via AudioWorklet — interrupting');
+              _handleInterruption();
+            }
+          }).toJS;
+
+          source.connect(node);
+          // Connect to destination so the graph stays alive (silent output)
+          node.connect(ctx.destination);
+          debugPrint('[VAD] AudioWorklet VAD active');
+        } catch (e) {
+          debugPrint('[VAD] Worklet node error: $e');
+          _teardownVad();
+        }
+      }).catchError((Object e) {
+        debugPrint('[VAD] addModule failed: $e');
+        _teardownVad();
+      });
+    } catch (e) {
+      debugPrint('[VAD] AudioContext error: $e');
+      _teardownVad();
+    }
+  }
+
+  void _teardownVad() {
+    try { _vadContext?.close(); } catch (_) {}
+    if (_vadStream != null) _stopMediaStream(_vadStream!);
+    _vadContext = null;
+    _vadStream  = null;
+    _shadowListening = false;
+  }
+
+  void _stopMediaStream(web.MediaStream stream) {
+    try {
+      for (final t in stream.getTracks().toDart) { t.stop(); }
+    } catch (_) {}
+  }
+
+  /// Android/iOS: use a second speech_to_text listen session as the trigger.
+  /// Native platforms allow concurrent STT sessions unlike the web single-instance model.
+  Future<void> _startNativeShadowListener() async {
+    if (_shadowListening || _handlingInterruption || _shadowTransitioning) return;
+    if (!_sttReady || _disposed || !mounted || _muted) return;
+    _shadowListening = true;
+    debugPrint('[VAD] Starting native shadow STT listener');
     try {
       await _stt.listen(
         onResult: (result) {
           if (_state != _CallState.speaking || _disposed || !mounted || _muted) return;
-          final words = result.recognizedWords.trim();
-          if (words.isEmpty) return;
-          debugPrint('[INTERRUPT] Heard during TTS: "$words"');
-          _interruptionBuffer = words;
+          if (_handlingInterruption || _shadowTransitioning) return;
+          if (result.recognizedWords.trim().isEmpty) return;
+          debugPrint('[VAD] Native shadow heard: "${result.recognizedWords}" — interrupting');
           _handleInterruption();
         },
         listenOptions: SpeechListenOptions(
           partialResults: true,
           listenFor: const Duration(seconds: 60),
-          pauseFor: const Duration(milliseconds: 500),
+          pauseFor: const Duration(seconds: 30),
           cancelOnError: false,
         ),
       );
-      debugPrint('[INTERRUPT] Shadow listener active');
     } catch (e) {
-      debugPrint('[INTERRUPT] Shadow listener error: $e');
+      debugPrint('[VAD] Native shadow listen error: $e');
       _shadowListening = false;
     }
   }
@@ -476,40 +570,35 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     if (_state != _CallState.speaking || _disposed || !mounted) return;
     if (_handlingInterruption) return;
     _handlingInterruption = true;
-    _shadowListening = false;
-    debugPrint('[INTERRUPT] Interrupting — buffered: "$_interruptionBuffer"');
+    _teardownVad();
+    debugPrint('[VAD] Handling interruption');
 
-    // Cancel everything
     _ttsSafetyTimer?.cancel();
     _chunkFlushTimer?.cancel();
     _silenceTimer?.cancel();
     _ttsQueue.clear();
     _pendingChunk = '';
-    _streamDone = true; // mark done so _onTtsDone transitions to listening
+    _streamDone = true;
     _botBusy = false;
     _listeningGuard = false;
-
-    // Seed transcript
-    _committedText = _interruptionBuffer;
-    _interruptionBuffer = '';
     _lastPartial = '';
+    _committedText = '';
     _consecutiveSilences = 0;
 
     if (!mounted || _disposed) { _handlingInterruption = false; return; }
-    setState(() {
-      _userCaption = _committedText;
-      _botCaption = '';
-    });
+    setState(() { _userCaption = ''; _botCaption = ''; });
 
-    // Arm silence timer now so when listening starts, it fires immediately
-    // if the user has already finished speaking.
-    if (_committedText.isNotEmpty) _armSilenceTimer();
-
-    // Stop TTS — this fires _onTtsDone which drives the → listening transition.
-    // _onTtsDone is already guarded and will call _startListening cleanly.
+    // Stop TTS — ignore completion/error callbacks for this stop since we
+    // are driving the transition ourselves right below.
     try { await _tts.stop(); } catch (_) {}
 
+    // Drive state forward directly — don't wait for _onTtsDone which may
+    // not fire reliably after an explicit stop().
     _handlingInterruption = false;
+    _shadowTransitioning = false;
+    if (!_disposed && mounted && !_muted) {
+      _startListening();
+    }
   }
 
   // Pulls speakable fragments out of _pendingChunk into _ttsQueue.
@@ -668,6 +757,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     _handlingInterruption = false;
     _shadowListening = false;
     _shadowTransitioning = false;
+    _teardownVad();
     _callTimer?.cancel();
     _ttsSafetyTimer?.cancel();
     _chunkFlushTimer?.cancel();
