@@ -1,8 +1,5 @@
 import 'dart:async';
 import 'dart:io' show Platform;
-import 'dart:js_interop';
-import 'dart:js_interop_unsafe';
-import 'package:web/web.dart' as web;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -13,6 +10,7 @@ import 'package:provider/provider.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:voicebot_directory/store/api_store.dart';
+import 'package:voicebot_directory/vad/vad.dart';
 
 import '../models/customer.dart';
 import '../services/api_service.dart';
@@ -431,114 +429,41 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     }
   }
 
-  // ── Interruption feature (WebRTC VAD via AudioWorklet) ──────────────────────
+  // ── Interruption feature (VAD) ───────────────────────────────────────────────
 
   bool _handlingInterruption = false;
   bool _shadowListening = false;
   bool _shadowTransitioning = false;
-
-  web.MediaStream?  _vadStream;
-  web.AudioContext? _vadContext;
-  // No timer needed — AudioWorklet posts a message when speech is detected.
+  final VadController _vad = VadController();
 
   void _startVadListener() {
     if (!_interruptionEnabled) return;
     if (_disposed || !mounted || _muted) return;
     if (_shadowListening || _handlingInterruption || _shadowTransitioning) return;
 
-    // On native (Android/iOS) use speech_to_text directly — no AudioWorklet needed.
-    if (!kIsWeb) {
-      _startNativeShadowListener();
-      return;
-    }
-
-    _shadowListening = true;
-    debugPrint('[VAD] Starting AudioWorklet VAD listener');
-
-    final constraints = web.MediaStreamConstraints(audio: true.toJS);
-    web.window.navigator.mediaDevices
-        .getUserMedia(constraints)
-        .toDart
-        .then((stream) {
-          if (!_shadowListening || _shadowTransitioning || _handlingInterruption ||
-              _disposed || !mounted) {
-            _stopMediaStream(stream);
-            return;
-          }
-          _vadStream = stream;
-          _setupVadWorklet(stream);
-        })
-        .catchError((Object e) {
-          debugPrint('[VAD] getUserMedia denied: $e');
-          _shadowListening = false;
-        });
-  }
-
-  void _setupVadWorklet(web.MediaStream stream) {
-    try {
-      final ctx = web.AudioContext();
-      _vadContext = ctx;
-
-      // Load the AudioWorklet processor from web/vad_worklet.js
-      ctx.audioWorklet.addModule('vad_worklet.js').toDart.then((_) {
+    if (kIsWeb) {
+      // Web: AudioWorklet VAD — runs off the main thread.
+      _shadowListening = true;
+      debugPrint('[VAD] Starting AudioWorklet VAD listener');
+      _vad.start(onSpeech: () {
         if (!_shadowListening || _shadowTransitioning || _handlingInterruption ||
-            _disposed || !mounted) {
-          _teardownVad();
+            _state != _CallState.speaking || _disposed || !mounted || _muted) {
           return;
         }
-        try {
-          final source = ctx.createMediaStreamSource(stream);
-          final node   = web.AudioWorkletNode(ctx, 'vad-processor');
-
-          // Receive speech detection messages from the audio thread
-          node.port.onmessage = ((web.MessageEvent event) {
-            if (!_shadowListening || _shadowTransitioning || _handlingInterruption ||
-                _state != _CallState.speaking || _disposed || !mounted || _muted) {
-              return;
-            }
-            final data = event.data as JSObject?;
-            if (data == null) return;
-            final type = data.getProperty<JSString?>('type'.toJS)?.toDart;
-            if (type == 'speech') {
-              debugPrint('[VAD] Speech detected via AudioWorklet — interrupting');
-              _handleInterruption();
-            }
-          }).toJS;
-
-          source.connect(node);
-          // Connect to destination so the graph stays alive (silent output)
-          node.connect(ctx.destination);
-          debugPrint('[VAD] AudioWorklet VAD active');
-        } catch (e) {
-          debugPrint('[VAD] Worklet node error: $e');
-          _teardownVad();
-        }
-      }).catchError((Object e) {
-        debugPrint('[VAD] addModule failed: $e');
-        _teardownVad();
+        debugPrint('[VAD] Speech detected — interrupting');
+        _handleInterruption();
       });
-    } catch (e) {
-      debugPrint('[VAD] AudioContext error: $e');
-      _teardownVad();
+    } else {
+      // Android/iOS: shadow STT session as voice trigger.
+      _startNativeShadowListener();
     }
   }
 
   void _teardownVad() {
-    try { _vadContext?.close(); } catch (_) {}
-    if (_vadStream != null) _stopMediaStream(_vadStream!);
-    _vadContext = null;
-    _vadStream  = null;
+    _vad.stop();
     _shadowListening = false;
   }
 
-  void _stopMediaStream(web.MediaStream stream) {
-    try {
-      for (final t in stream.getTracks().toDart) { t.stop(); }
-    } catch (_) {}
-  }
-
-  /// Android/iOS: use a second speech_to_text listen session as the trigger.
-  /// Native platforms allow concurrent STT sessions unlike the web single-instance model.
   Future<void> _startNativeShadowListener() async {
     if (_shadowListening || _handlingInterruption || _shadowTransitioning) return;
     if (!_sttReady || _disposed || !mounted || _muted) return;
@@ -550,7 +475,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
           if (_state != _CallState.speaking || _disposed || !mounted || _muted) return;
           if (_handlingInterruption || _shadowTransitioning) return;
           if (result.recognizedWords.trim().isEmpty) return;
-          debugPrint('[VAD] Native shadow heard: "${result.recognizedWords}" — interrupting');
+          debugPrint('[VAD] Native heard: "${result.recognizedWords}" — interrupting');
           _handleInterruption();
         },
         listenOptions: SpeechListenOptions(
@@ -561,7 +486,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
         ),
       );
     } catch (e) {
-      debugPrint('[VAD] Native shadow listen error: $e');
+      debugPrint('[VAD] Native shadow error: $e');
       _shadowListening = false;
     }
   }
@@ -588,12 +513,8 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     if (!mounted || _disposed) { _handlingInterruption = false; return; }
     setState(() { _userCaption = ''; _botCaption = ''; });
 
-    // Stop TTS — ignore completion/error callbacks for this stop since we
-    // are driving the transition ourselves right below.
     try { await _tts.stop(); } catch (_) {}
 
-    // Drive state forward directly — don't wait for _onTtsDone which may
-    // not fire reliably after an explicit stop().
     _handlingInterruption = false;
     _shadowTransitioning = false;
     if (!_disposed && mounted && !_muted) {
