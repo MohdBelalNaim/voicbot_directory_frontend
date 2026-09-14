@@ -3,6 +3,7 @@ import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
@@ -32,6 +33,9 @@ class CallScreen extends StatefulWidget {
 }
 
 class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
+  static final bool _interruptionEnabled =
+      (dotenv.env['ENABLE_INTERRUPTION'] ?? 'false').toLowerCase() == 'true';
+
   final _tts = FlutterTts();
   final _stt = SpeechToText();
 
@@ -144,6 +148,25 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
           debugPrint(
               '[STT] Status: $status  state=$_state guard=$_listeningGuard botBusy=$_botBusy');
           if (_disposed || !mounted) return;
+
+          // On web, SpeechRecognition auto-stops after a few seconds of silence.
+          // Restart the shadow listener if we're still in speaking state.
+          if (_interruptionEnabled &&
+              (status == 'done' || status == 'notListening') &&
+              _state == _CallState.speaking &&
+              !_handlingInterruption &&
+              !_shadowTransitioning &&
+              _shadowListening) {
+            _shadowListening = false;
+            Future.delayed(const Duration(milliseconds: 100), () {
+              if (!_disposed && mounted && _state == _CallState.speaking &&
+                  !_handlingInterruption && !_shadowTransitioning) {
+                _startInterruptionListener();
+              }
+            });
+            return;
+          }
+
           if ((status == 'done' || status == 'notListening') &&
               _state == _CallState.listening &&
               !_muted &&
@@ -198,7 +221,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
 
   /// Central handler when TTS finishes (or errors out). Drives the state machine
   /// forward: drains queue → when done, transitions to listening.
-  void _onTtsDone() {
+  Future<void> _onTtsDone() async {
     if (_disposed || !mounted) return;
     if (_muted) {
       setState(() => _state = _CallState.muted);
@@ -207,11 +230,23 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
     if (_botBusy || _ttsQueue.isNotEmpty) {
       _flushTtsQueue();
     } else {
-      Future.delayed(const Duration(milliseconds: 300), () {
-        if (!_disposed && mounted && !_botBusy && !_muted) {
-          _startListening();
-        }
-      });
+      await _stopShadowAndListen(continueSession: _committedText.isNotEmpty);
+    }
+  }
+
+  /// Stops the shadow STT listener (if running) then starts the main listening
+  /// session. Centralised so every code path uses the same safe handoff.
+  Future<void> _stopShadowAndListen({bool continueSession = false}) async {
+    if (_disposed || !mounted) return;
+    // Raise transitioning flag FIRST — blocks onStatus restart and new shadow starts.
+    _shadowTransitioning = true;
+    _shadowListening = false;
+    try { await _stt.stop(); } catch (_) {}
+    // Small gap lets the browser release the audio stream fully.
+    await Future.delayed(const Duration(milliseconds: 300));
+    _shadowTransitioning = false;
+    if (!_disposed && mounted && !_botBusy && !_muted) {
+      _startListening(continueSession: continueSession);
     }
   }
 
@@ -230,6 +265,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
       }
     });
     _tts.speak(text);
+    _startInterruptionListener();
   }
 
   Future<void> _playWelcome() async {
@@ -266,6 +302,8 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
       return;
     }
     _listeningGuard = true;
+    _shadowListening = false;       // prevent any delayed shadow restart from firing
+    _shadowTransitioning = false;   // we're now in listen mode, transitioning is over
     _lastPartial = '';
     if (!continueSession) {
       // Fresh turn: drop anything carried over and clear the silence window.
@@ -378,7 +416,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
   }
 
   // Speaks the next queued sentence, or transitions back to listening when done.
-  void _flushTtsQueue() {
+  Future<void> _flushTtsQueue() async {
     if (_disposed || !mounted || _muted) return;
     if (_ttsQueue.isNotEmpty) {
       final sentence = _ttsQueue.removeAt(0);
@@ -389,16 +427,89 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
       debugPrint('[TTS] Queue empty, stream done — going to listening');
       _botBusy = false;
       if (!_muted) {
-        Future.delayed(const Duration(milliseconds: 300), () {
-          if (!_disposed && mounted && !_botBusy && !_muted) {
-            _startListening();
-          }
-        });
+        await _stopShadowAndListen();
       }
     } else {
       // TTS caught up with the stream; _extractSentencesToQueue will resume us.
       setState(() => _state = _CallState.processing);
     }
+  }
+
+  // ── Interruption feature ─────────────────────────────────────────────────────
+
+  String _interruptionBuffer = '';
+  bool _handlingInterruption = false;
+  bool _shadowListening = false; // set synchronously to prevent double-start
+  bool _shadowTransitioning = false; // blocks all shadow restarts during handoff
+
+  Future<void> _startInterruptionListener() async {
+    if (!_interruptionEnabled) return;
+    if (_disposed || !mounted || !_sttReady || _muted) return;
+    if (_shadowListening || _handlingInterruption || _shadowTransitioning) return;
+    _shadowListening = true; // set BEFORE await — blocks any concurrent call
+    debugPrint('[INTERRUPT] Starting shadow listener');
+    try {
+      await _stt.listen(
+        onResult: (result) {
+          if (_state != _CallState.speaking || _disposed || !mounted || _muted) return;
+          final words = result.recognizedWords.trim();
+          if (words.isEmpty) return;
+          debugPrint('[INTERRUPT] Heard during TTS: "$words"');
+          _interruptionBuffer = words;
+          _handleInterruption();
+        },
+        listenOptions: SpeechListenOptions(
+          partialResults: true,
+          listenFor: const Duration(seconds: 60),
+          pauseFor: const Duration(milliseconds: 500),
+          cancelOnError: false,
+        ),
+      );
+      debugPrint('[INTERRUPT] Shadow listener active');
+    } catch (e) {
+      debugPrint('[INTERRUPT] Shadow listener error: $e');
+      _shadowListening = false;
+    }
+  }
+
+  Future<void> _handleInterruption() async {
+    if (_state != _CallState.speaking || _disposed || !mounted) return;
+    if (_handlingInterruption) return;
+    _handlingInterruption = true;
+    _shadowListening = false;
+    debugPrint('[INTERRUPT] Interrupting — buffered: "$_interruptionBuffer"');
+
+    // Cancel everything
+    _ttsSafetyTimer?.cancel();
+    _chunkFlushTimer?.cancel();
+    _silenceTimer?.cancel();
+    _ttsQueue.clear();
+    _pendingChunk = '';
+    _streamDone = true; // mark done so _onTtsDone transitions to listening
+    _botBusy = false;
+    _listeningGuard = false;
+
+    // Seed transcript
+    _committedText = _interruptionBuffer;
+    _interruptionBuffer = '';
+    _lastPartial = '';
+    _consecutiveSilences = 0;
+
+    if (!mounted || _disposed) { _handlingInterruption = false; return; }
+    setState(() {
+      _userCaption = _committedText;
+      _botCaption = '';
+    });
+
+    // Arm silence timer now so when listening starts, it fires immediately
+    // if the user has already finished speaking.
+    if (_committedText.isNotEmpty) _armSilenceTimer();
+
+    // Stop TTS — this fires _onTtsDone which drives the → listening transition.
+    // _onTtsDone is already guarded and will call _startListening cleanly.
+    try { await _tts.stop(); } catch (_) {}
+
+    _handlingInterruption = false;
   }
 
   // Pulls speakable fragments out of _pendingChunk into _ttsQueue.
@@ -491,6 +602,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
       await for (final chunk
           in apiService.streamChat(widget.customer.id, query)) {
         if (_disposed) return;
+        if (!_botBusy) return;
         buf.write(chunk);
         _pendingChunk += chunk;
         if (mounted) setState(() => _botCaption = buf.toString());
@@ -514,7 +626,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
 
       if (buf.toString().trim().isEmpty) {
         _botBusy = false;
-        if (!_muted) _startListening();
+        if (!_muted) await _stopShadowAndListen();
         return;
       }
 
@@ -525,7 +637,7 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
       _streamDone = true;
       _ttsQueue.clear();
       _botBusy = false;
-      if (!_disposed && mounted && !_muted) _startListening();
+      if (!_disposed && mounted && !_muted) await _stopShadowAndListen();
     }
   }
 
@@ -553,6 +665,9 @@ class _CallScreenState extends State<CallScreen> with TickerProviderStateMixin {
 
   Future<void> _endCall() async {
     _disposed = true;
+    _handlingInterruption = false;
+    _shadowListening = false;
+    _shadowTransitioning = false;
     _callTimer?.cancel();
     _ttsSafetyTimer?.cancel();
     _chunkFlushTimer?.cancel();
